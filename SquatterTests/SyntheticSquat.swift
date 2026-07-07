@@ -14,8 +14,17 @@ struct SyntheticSquat {
     var valgusShift = 0.0
     /// Torso lean from vertical at the bottom, degrees.
     var maxTorsoLean = 35.0
+    /// Ankle separation as a multiple of hip width (1 = heels under hips).
+    var stanceScale = 1.0
+    /// Lateral pelvis-over-feet oscillation amplitude near the bottom, meters.
+    var bottomWobbleMeters = 0.0
+    /// Squat progress held between reps: 0 = full lockout, >0 = the lifter
+    /// never stands up fully.
+    var restProgress = 0.0
     var eccentricSeconds = 1.2
     var concentricSeconds = 1.0
+    /// Hold at the bottom of each rep (0 = touch-and-go).
+    var bottomPauseSeconds = 0.0
     var pauseSeconds = 1.0
     var frameRate = 15.0
     var noise = 0.0
@@ -41,11 +50,13 @@ struct SyntheticSquat {
             }
         }
 
-        addPhase(duration: pauseSeconds) { _ in 0 }
+        let rest = restProgress
+        addPhase(duration: pauseSeconds) { _ in rest }
         for _ in 0 ..< repCount {
-            addPhase(duration: eccentricSeconds) { $0 }
-            addPhase(duration: concentricSeconds) { 1 - $0 }
-            addPhase(duration: pauseSeconds) { _ in 0 }
+            addPhase(duration: eccentricSeconds) { rest + $0 * (1 - rest) }
+            addPhase(duration: bottomPauseSeconds) { _ in 1 }
+            addPhase(duration: concentricSeconds) { 1 - $0 * (1 - rest) }
+            addPhase(duration: pauseSeconds) { _ in rest }
         }
         return JointSeries(frames: frames, bodyHeight: 1.78, usedDepth: false)
     }
@@ -59,6 +70,12 @@ struct SyntheticSquat {
         let torsoAngle = Float(eased * maxTorsoLean * .pi / 180)
         // Valgus appears in the deep half of the movement.
         let valgus = Float(max(0, eased - 0.5) * 2 * valgusShift)
+        // Pelvis-over-feet wobble only while sitting in the bottom; in
+        // root-anchored space it shows up as both ankles shifting laterally.
+        // Slow enough (1.2 Hz) to survive the pipeline's smoothing window,
+        // matching how real hip rocking looks.
+        let wobbleGate = min(max((eased - 0.85) / 0.15, 0), 1)
+        let wobble = Float(wobbleGate * bottomWobbleMeters * sin(time * 2 * .pi * 1.2))
 
         var positions: [BodyJoint: SIMD3<Float>] = [:]
         positions[.root] = .zero
@@ -69,10 +86,14 @@ struct SyntheticSquat {
 
         for (side, sign) in [("left", Float(-1)), ("right", Float(1))] {
             let hip = SIMD3(sign * hipHalfWidth, 0, 0)
+            // Non-default stances move the ankle off the hip line; the knee
+            // splits the difference so it still tracks the hip–ankle line.
+            let stanceOffset = sign * hipHalfWidth * Float(stanceScale - 1)
             var knee = hip + SIMD3(0, -femurLength * cos(femurAngle), femurLength * sin(femurAngle))
             knee.x -= sign * valgus // medial shift: toward the body midline
+            knee.x += stanceOffset / 2
             let ankle = knee + SIMD3(
-                sign * valgus, // ankle stays planted under the hip line
+                sign * valgus + stanceOffset / 2 + wobble, // planted under the stance line
                 -shinLength * cos(shinAngle),
                 -shinLength * sin(shinAngle)
             )

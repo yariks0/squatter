@@ -109,6 +109,45 @@ struct MetricsTests {
             #expect(rep.asymmetryDegrees < 5)
         }
     }
+
+    @Test func stanceWidthMeasured() throws {
+        var generator = SyntheticSquat(repCount: 2)
+        for (scale, expectNarrow, expectWide) in [(1.0, false, false), (0.5, true, false), (2.5, false, true)] {
+            generator.stanceScale = scale
+            for rep in metrics(generator) {
+                let ratio = try #require(rep.stanceWidthRatio)
+                #expect((ratio < AnalysisTuning.stanceNarrowRatio) == expectNarrow)
+                #expect((ratio > AnalysisTuning.stanceWideRatio) == expectWide)
+            }
+        }
+    }
+
+    @Test func bottomWobbleDetected() throws {
+        var generator = SyntheticSquat(repCount: 3)
+        generator.bottomPauseSeconds = 0.8
+        for rep in metrics(generator) {
+            let shift = try #require(rep.bottomHipShiftRatio)
+            #expect(shift < AnalysisTuning.bottomShiftWarningRatio)
+        }
+        generator.bottomWobbleMeters = 0.06
+        for rep in metrics(generator) {
+            let shift = try #require(rep.bottomHipShiftRatio)
+            #expect(shift >= AnalysisTuning.bottomShiftWarningRatio)
+        }
+    }
+
+    @Test func lockoutMeasured() throws {
+        for rep in metrics(SyntheticSquat(repCount: 3)) {
+            let lockout = try #require(rep.lockoutKneeDegrees)
+            #expect(lockout >= AnalysisTuning.lockoutKneeDegrees)
+        }
+        var generator = SyntheticSquat(repCount: 3)
+        generator.restProgress = 0.35
+        for rep in metrics(generator) {
+            let lockout = try #require(rep.lockoutKneeDegrees)
+            #expect(lockout < AnalysisTuning.lockoutKneeDegrees)
+        }
+    }
 }
 
 struct FormRulesTests {
@@ -153,6 +192,28 @@ struct FormRulesTests {
         #expect(analysis.findings.contains { $0.title == "Dropping too fast" })
     }
 
+    @Test func narrowStanceFlagged() {
+        var generator = SyntheticSquat(repCount: 3)
+        generator.stanceScale = 0.5
+        let analysis = analyze(generator)
+        #expect(analysis.findings.contains { $0.title == "Stance too narrow" })
+    }
+
+    @Test func bottomWobbleFlagged() {
+        var generator = SyntheticSquat(repCount: 3)
+        generator.bottomPauseSeconds = 0.8
+        generator.bottomWobbleMeters = 0.06
+        let analysis = analyze(generator)
+        #expect(analysis.findings.contains { $0.title == "Hips shifting at the bottom" })
+    }
+
+    @Test func partialLockoutFlagged() {
+        var generator = SyntheticSquat(repCount: 3)
+        generator.restProgress = 0.35
+        let analysis = analyze(generator)
+        #expect(analysis.findings.contains { $0.title == "Not standing up fully" })
+    }
+
     @Test func emptySeriesReportsNoReps() {
         let analysis = SquatAnalyzer.analyze(JointSeries(frames: [], bodyHeight: nil, usedDepth: false))
         #expect(analysis.reps.isEmpty)
@@ -175,6 +236,21 @@ struct SerializationTests {
         let decoded = try JSONDecoder().decode(SquatAnalysis.self, from: data)
         #expect(decoded.reps.count == analysis.reps.count)
         #expect(decoded.score == analysis.score)
+    }
+
+    /// Sessions saved before stance/bottom-shift/lockout metrics existed must
+    /// still decode (the new fields are optional).
+    @Test func metricsSavedBeforeNewFieldsStillDecode() throws {
+        let legacy = """
+        {"repNumber":1,"startTime":0,"endTime":2.5,"eccentricSeconds":1.3,
+        "concentricSeconds":1.2,"depthFraction":0.5,"kneeFlexionDegrees":70,
+        "hipBelowKneeDegrees":14,"torsoLeanDegrees":30,"kneeValgusRatio":0.05,
+        "asymmetryDegrees":2}
+        """
+        let decoded = try JSONDecoder().decode(RepMetrics.self, from: Data(legacy.utf8))
+        #expect(decoded.stanceWidthRatio == nil)
+        #expect(decoded.bottomHipShiftRatio == nil)
+        #expect(decoded.lockoutKneeDegrees == nil)
     }
 }
 

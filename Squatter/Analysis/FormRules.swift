@@ -41,6 +41,9 @@ enum FormRules {
         findings.append(contentsOf: torsoFindings(reps))
         findings.append(contentsOf: tempoFindings(reps))
         findings.append(contentsOf: asymmetryFindings(reps))
+        findings.append(contentsOf: stanceFindings(reps))
+        findings.append(contentsOf: bottomStabilityFindings(reps))
+        findings.append(contentsOf: lockoutFindings(reps))
         findings.append(contentsOf: fatigueFindings(reps))
         return findings.sorted { $0.severity > $1.severity }
     }
@@ -174,6 +177,53 @@ enum FormRules {
             title: "Uneven left/right",
             detail: "One knee bends noticeably more than the other on \(repList(uneven)) — often a weight shift to the stronger leg. Film from the front occasionally and check foot pressure stays even.",
             repNumbers: uneven.map(\.repNumber)
+        )]
+    }
+
+    private static func stanceFindings(_ reps: [RepMetrics]) -> [Finding] {
+        let narrow = reps.filter { ($0.stanceWidthRatio ?? 1) < AnalysisTuning.stanceNarrowRatio }
+        let wide = reps.filter { ($0.stanceWidthRatio ?? 1) > AnalysisTuning.stanceWideRatio }
+        var findings: [Finding] = []
+        if !narrow.isEmpty {
+            findings.append(Finding(
+                severity: narrow.count > reps.count / 2 ? .warning : .info,
+                title: "Stance too narrow",
+                detail: "Your feet were inside hip width on \(repList(narrow)). Set the heels about shoulder-width apart with the toes turned out ~30° so the hips have room to sit down between the legs.",
+                repNumbers: narrow.map(\.repNumber)
+            ))
+        }
+        if !wide.isEmpty {
+            findings.append(Finding(
+                severity: wide.count > reps.count / 2 ? .warning : .info,
+                title: "Stance very wide",
+                detail: "Your feet were well outside shoulder width on \(repList(wide)). The high-bar standard is heels around shoulder width — a wide stance turns the squat into a hip hinge and limits upright depth.",
+                repNumbers: wide.map(\.repNumber)
+            ))
+        }
+        return findings
+    }
+
+    private static func bottomStabilityFindings(_ reps: [RepMetrics]) -> [Finding] {
+        let wobbly = reps.filter {
+            ($0.bottomHipShiftRatio ?? 0) >= AnalysisTuning.bottomShiftWarningRatio
+        }
+        guard !wobbly.isEmpty else { return [] }
+        return [Finding(
+            severity: .warning,
+            title: "Hips shifting at the bottom",
+            detail: "The pelvis wandered instead of holding still at the bottom on \(repList(wobbly)). The bottom position should be a held, braced posture: hips centered between the feet, no wiggling or rocking to find a rebound — that instability under load falls on the lower back.",
+            repNumbers: wobbly.map(\.repNumber)
+        )]
+    }
+
+    private static func lockoutFindings(_ reps: [RepMetrics]) -> [Finding] {
+        let cut = reps.filter { ($0.lockoutKneeDegrees ?? 180) < AnalysisTuning.lockoutKneeDegrees }
+        guard !cut.isEmpty else { return [] }
+        return [Finding(
+            severity: .warning,
+            title: "Not standing up fully",
+            detail: "You started the next descent before reaching lockout on \(repList(cut)). Finish every rep standing tall — knees and hips fully extended, one breath — before going down again; cutting the top shortens the rep and hides fatigue.",
+            repNumbers: cut.map(\.repNumber)
         )]
     }
 

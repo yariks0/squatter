@@ -46,6 +46,26 @@ enum AnalysisTuning {
     // MARK: Symmetry (left/right knee-angle difference at the bottom, degrees)
     static let asymmetryWarningDegrees = 12.0
 
+    // MARK: Stance (ankle separation / shoulder width, measured standing at
+    // the start of a rep). High-bar standard: heels around shoulder width so
+    // the hips can sit between the legs — hip-width down to ~0.7 is fine,
+    // inside that is too narrow to reach depth upright.
+    static let stanceNarrowRatio = 0.7
+    static let stanceWideRatio = 1.7
+
+    // MARK: Bottom stability (horizontal pelvis drift while at the bottom,
+    // as a fraction of hip width). A held bottom position keeps the pelvis
+    // still; wiggle/rocking under load is a control fault.
+    static let bottomShiftWarningRatio = 0.25
+    /// Frames count as "at the bottom" while the squat signal is within this
+    /// fraction of standing height above the rep's lowest point.
+    static let bottomWindowFraction = 0.05
+
+    // MARK: Lockout (average knee angle at the top of the rep, degrees;
+    // 180 = fully straight). Below this the lifter started the next descent
+    // without standing up fully.
+    static let lockoutKneeDegrees = 160.0
+
     // MARK: Fatigue (relative depth loss between first and last reps)
     static let fatigueDepthLossFraction = 0.25
 

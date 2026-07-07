@@ -40,6 +40,16 @@ enum CoachPrompt {
         than \(AnalysisTuning.slowConcentricSeconds) s is a grind. Grinding \
         is normal in dedicated heavy strength work; for technique-focused \
         sets it means the load is too heavy.
+        - Stance: heels around shoulder width, toes out ~30°. The metric is \
+        ankle separation over shoulder width — below \
+        \(AnalysisTuning.stanceNarrowRatio) is too narrow, above \
+        \(AnalysisTuning.stanceWideRatio) too wide for high-bar work.
+        - The bottom is a held position: pelvis drift there beyond \
+        \(Int(AnalysisTuning.bottomShiftWarningRatio * 100))% of hip width \
+        ("butt wiggle") is a control fault.
+        - Every rep finishes at full lockout; a top-of-rep knee angle under \
+        \(Int(AnalysisTuning.lockoutKneeDegrees))° means the lifter cut the \
+        rep short.
 
         How the data was measured: joint positions come from Apple Vision's \
         3D body pose at 15 fps (LiDAR depth when the capture notes say so), \
@@ -97,12 +107,22 @@ enum CoachPrompt {
         lines.append("")
         lines.append("Per-rep metrics (femur angle positive = hip below knee):")
         for rep in analysis.reps {
-            lines.append(String(
+            var line = String(
                 format: "Rep %d: femur %+.0f°, torso lean %.0f°, valgus %.2f×hip width, down %.1f s, up %.1f s, L/R knee diff %.0f°",
                 rep.repNumber, rep.hipBelowKneeDegrees, rep.torsoLeanDegrees,
                 rep.kneeValgusRatio, rep.eccentricSeconds, rep.concentricSeconds,
                 rep.asymmetryDegrees
-            ))
+            )
+            if let stance = rep.stanceWidthRatio {
+                line += String(format: ", stance %.2f×shoulder width", stance)
+            }
+            if let shift = rep.bottomHipShiftRatio {
+                line += String(format: ", bottom pelvis drift %.2f×hip width", shift)
+            }
+            if let lockout = rep.lockoutKneeDegrees {
+                line += String(format: ", top knee %.0f°", lockout)
+            }
+            lines.append(line)
         }
         lines.append("")
         lines.append("Rules-engine findings already shown to the lifter:")

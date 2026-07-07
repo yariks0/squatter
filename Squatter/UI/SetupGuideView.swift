@@ -14,7 +14,12 @@ struct SetupGuideView: View {
                 step(
                     icon: "iphone.gen3",
                     title: "Prop up your phone",
-                    text: "About 3 meters away, roughly hip height. A 45° front-side angle works best — the camera should see your face and one side."
+                    text: "About 3 meters away, roughly knee-to-hip height, propped steady in portrait. That distance keeps your whole body in frame and stays within LiDAR range."
+                )
+                step(
+                    icon: "angle",
+                    title: "Stand at a 45° angle",
+                    text: "Face halfway between head-on and side-on. This one angle shows both squat depth and knee tracking — straight-on hides depth, a pure side view hides knees caving."
                 )
                 step(
                     icon: "person.crop.rectangle",

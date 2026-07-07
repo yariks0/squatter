@@ -21,6 +21,9 @@ struct ReportView: View {
                     repStrip
                 }
                 findingsSection
+                if !analysis.reps.isEmpty {
+                    CoachSectionView(analysis: analysis, videoURL: videoURL)
+                }
             }
             .padding()
         }
@@ -141,7 +144,7 @@ private struct RepCard: View {
     }
 }
 
-private struct FindingRow: View {
+struct FindingRow: View {
     let finding: Finding
 
     var body: some View {

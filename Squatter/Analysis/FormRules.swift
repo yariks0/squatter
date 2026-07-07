@@ -144,14 +144,26 @@ enum FormRules {
     }
 
     private static func tempoFindings(_ reps: [RepMetrics]) -> [Finding] {
+        var findings: [Finding] = []
         let rushed = reps.filter { $0.eccentricSeconds < AnalysisTuning.minimumEccentricSeconds }
-        guard !rushed.isEmpty else { return [] }
-        return [Finding(
-            severity: .warning,
-            title: "Dropping too fast",
-            detail: "Very fast descent on \(repList(rushed)). Control the way down (aim for 1–2 s) — bouncing out of the bottom is hard on knees and spine.",
-            repNumbers: rushed.map(\.repNumber)
-        )]
+        if !rushed.isEmpty {
+            findings.append(Finding(
+                severity: .warning,
+                title: "Dropping too fast",
+                detail: "Free-fall descent on \(repList(rushed)). A rebound out of the bottom is good technique, but it has to come off a controlled 1–2 s descent — stay tight on the way down so the bounce comes from position, not from falling.",
+                repNumbers: rushed.map(\.repNumber)
+            ))
+        }
+        let grinding = reps.filter { $0.concentricSeconds > AnalysisTuning.slowConcentricSeconds }
+        if !grinding.isEmpty {
+            findings.append(Finding(
+                severity: .info,
+                title: "Grinding ascent",
+                detail: "Slow stand-up on \(repList(grinding)). Heavy strength work can grind, but if you're training technique, keep reps crisp out of the bottom — when every rep slows to a grind, the load is too heavy for that.",
+                repNumbers: grinding.map(\.repNumber)
+            ))
+        }
+        return findings
     }
 
     private static func asymmetryFindings(_ reps: [RepMetrics]) -> [Finding] {

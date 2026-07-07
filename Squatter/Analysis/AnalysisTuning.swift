@@ -18,22 +18,30 @@ enum AnalysisTuning {
 
     // MARK: Depth (femur angle vs horizontal at the bottom, degrees;
     // positive = hip crease below the knee)
-    /// Full depth: hip crease clearly below the knee, the standard position.
-    static let fullDepthDegrees = 8.0
+    /// Full depth: sitting fully down with the hip crease well below the
+    /// knee, not just breaking parallel.
+    static let fullDepthDegrees = 12.0
     /// Below this the rep counts as shallow (above parallel).
     static let parallelToleranceDegrees = -8.0
 
     // MARK: Torso lean at the bottom (degrees from vertical).
-    // High-bar standard: torso close to vertical; lean is caught early.
-    static let torsoLeanWarningDegrees = 45.0
-    static let torsoLeanRiskDegrees = 55.0
+    // High-bar standard: torso close to vertical (a deep upright squat sits
+    // around 25–35°), so lean is caught early.
+    static let torsoLeanWarningDegrees = 40.0
+    static let torsoLeanRiskDegrees = 50.0
 
     // MARK: Knee valgus (medial knee deviation / hip width)
     static let valgusWarningRatio = 0.18
     static let valgusRiskRatio = 0.32
 
     // MARK: Tempo
+    /// Below this the descent is a free fall rather than a controlled ~1–2 s
+    /// eccentric. The elastic rebound out of the bottom is fine — the descent
+    /// feeding it must be controlled.
     static let minimumEccentricSeconds = 0.6
+    /// Above this the ascent is a grind — bar speed out of the bottom is the
+    /// load-management signal in Chinese weightlifting practice.
+    static let slowConcentricSeconds = 2.5
 
     // MARK: Symmetry (left/right knee-angle difference at the bottom, degrees)
     static let asymmetryWarningDegrees = 12.0

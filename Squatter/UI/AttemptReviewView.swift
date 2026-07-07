@@ -147,9 +147,12 @@ private struct TrimRangeBar: View {
                     .frame(width: max(endX - startX, handleWidth))
                     .offset(x: startX)
 
+                // Drag locations must be read in the bar's coordinate space —
+                // the handles are offset views, so their local space always
+                // reports x near zero and the handle sticks at the left edge.
                 handle(at: startX, systemImage: "chevron.compact.left")
                     .gesture(
-                        DragGesture(minimumDistance: 0)
+                        DragGesture(minimumDistance: 0, coordinateSpace: .named(Self.spaceName))
                             .onChanged { value in
                                 start = min(
                                     max(0, time(at: value.location.x, in: width)),
@@ -160,7 +163,7 @@ private struct TrimRangeBar: View {
                     )
                 handle(at: endX - handleWidth, systemImage: "chevron.compact.right")
                     .gesture(
-                        DragGesture(minimumDistance: 0)
+                        DragGesture(minimumDistance: 0, coordinateSpace: .named(Self.spaceName))
                             .onChanged { value in
                                 end = max(
                                     min(duration, time(at: value.location.x, in: width)),
@@ -170,9 +173,12 @@ private struct TrimRangeBar: View {
                             }
                     )
             }
+            .coordinateSpace(name: Self.spaceName)
         }
         .frame(height: barHeight)
     }
+
+    private static let spaceName = "trimBar"
 
     private func handle(at x: CGFloat, systemImage: String) -> some View {
         RoundedRectangle(cornerRadius: 7)

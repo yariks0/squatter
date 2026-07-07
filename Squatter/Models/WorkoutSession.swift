@@ -35,7 +35,9 @@ final class WorkoutSession {
     /// Removes the recording files backing this session.
     func deleteFiles() {
         guard let directory = try? FileLocations.recordingsDirectory() else { return }
-        try? FileManager.default.removeItem(at: directory.appendingPathComponent(videoFileName))
+        let videoURL = directory.appendingPathComponent(videoFileName)
+        try? FileManager.default.removeItem(at: videoURL)
+        CoachReportStore.delete(for: videoURL)
         if let depthFileName {
             try? FileManager.default.removeItem(at: directory.appendingPathComponent(depthFileName))
         }

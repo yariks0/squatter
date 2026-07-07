@@ -161,6 +161,7 @@ struct HomeView: View {
             let depthURL = videoURL.deletingPathExtension()
                 .appendingPathExtension(DepthSidecar.fileExtension)
             try? FileManager.default.removeItem(at: depthURL)
+            CoachReportStore.delete(for: videoURL)
         }
         refreshUnanalyzed()
     }

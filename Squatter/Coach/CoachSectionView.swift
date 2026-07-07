@@ -35,6 +35,11 @@ struct CoachSectionView: View {
             content
         }
         .sheet(isPresented: $showKeyEntry) { keyEntrySheet }
+        .onAppear {
+            if case .idle = phase, let stored = CoachReportStore.load(for: videoURL) {
+                phase = .done(stored)
+            }
+        }
     }
 
     @ViewBuilder
@@ -72,6 +77,14 @@ struct CoachSectionView: View {
             }
         case let .done(report):
             reportView(report)
+            Button {
+                run()
+            } label: {
+                Label("Regenerate", systemImage: "arrow.clockwise")
+                    .font(.caption)
+            }
+            .buttonStyle(.bordered)
+            .buttonBorderShape(.capsule)
         }
     }
 
@@ -120,7 +133,9 @@ struct CoachSectionView: View {
         phase = .running
         Task {
             do {
-                phase = .done(try await CoachClient.coach(analysis: analysis, videoURL: videoURL))
+                let report = try await CoachClient.coach(analysis: analysis, videoURL: videoURL)
+                CoachReportStore.save(report, for: videoURL)
+                phase = .done(report)
             } catch {
                 phase = .failed(error.localizedDescription)
             }

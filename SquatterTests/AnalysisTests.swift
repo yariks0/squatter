@@ -178,6 +178,44 @@ struct SerializationTests {
     }
 }
 
+struct FormFaultTests {
+    private func bottomFrame(_ generator: SyntheticSquat) -> JointFrame {
+        let series = generator.series()
+        let bottomTime = generator.pauseSeconds + generator.eccentricSeconds
+        return series.frames.min { abs($0.time - bottomTime) < abs($1.time - bottomTime) }!
+    }
+
+    @Test func cleanBottomHasNoFaults() {
+        let faults = FormFaultDetector.faults(in: bottomFrame(SyntheticSquat(repCount: 1)))
+        #expect(faults == .none)
+    }
+
+    @Test func foldedTorsoFaultsTorsoOnly() {
+        let faults = FormFaultDetector.faults(
+            in: bottomFrame(SyntheticSquat(repCount: 1, maxTorsoLean: 62))
+        )
+        #expect(faults.torso)
+        #expect(!faults.leftLeg && !faults.rightLeg)
+        #expect(BodyJoint.faulted((.spine, .centerShoulder), by: faults))
+        #expect(!BodyJoint.faulted((.leftHip, .leftKnee), by: faults))
+    }
+
+    @Test func cavingKneesFaultLegs() {
+        let faults = FormFaultDetector.faults(
+            in: bottomFrame(SyntheticSquat(repCount: 1, valgusShift: 0.09))
+        )
+        #expect(faults.leftLeg && faults.rightLeg)
+        #expect(BodyJoint.faulted((.leftKnee, .leftAnkle), by: faults))
+        #expect(!BodyJoint.faulted((.root, .spine), by: faults))
+    }
+
+    @Test func standingFrameHasNoFaults() {
+        let series = SyntheticSquat(repCount: 1).series()
+        let faults = FormFaultDetector.faults(in: series.frames.first!)
+        #expect(faults == .none)
+    }
+}
+
 struct SmoothingTests {
     @Test func smoothingReducesJitter() {
         let clean = SyntheticSquat(repCount: 2, noise: 0).series()

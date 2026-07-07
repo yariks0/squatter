@@ -55,23 +55,33 @@ private struct SkeletonOverlay: View {
     var body: some View {
         Canvas { context, size in
             guard let frame = nearestFrame(to: time) else { return }
+            let faults = FormFaultDetector.faults(in: frame)
             func point(_ joint: BodyJoint) -> CGPoint? {
                 guard let p = frame.imagePoints[joint] else { return nil }
                 // Vision image points: normalized, origin bottom-left.
                 return CGPoint(x: CGFloat(p.x) * size.width, y: (1 - CGFloat(p.y)) * size.height)
             }
-            var path = Path()
-            for (a, b) in BodyJoint.bones {
-                guard let pa = point(a), let pb = point(b) else { continue }
-                path.move(to: pa)
-                path.addLine(to: pb)
+            // Parts breaking form right now (folding torso, caving knee)
+            // draw red; everything in position stays green.
+            var okPath = Path()
+            var faultPath = Path()
+            for bone in BodyJoint.bones {
+                guard let pa = point(bone.0), let pb = point(bone.1) else { continue }
+                if BodyJoint.faulted(bone, by: faults) {
+                    faultPath.move(to: pa)
+                    faultPath.addLine(to: pb)
+                } else {
+                    okPath.move(to: pa)
+                    okPath.addLine(to: pb)
+                }
             }
-            context.stroke(path, with: .color(.green.opacity(0.8)), lineWidth: 3)
+            context.stroke(okPath, with: .color(.green.opacity(0.8)), lineWidth: 3)
+            context.stroke(faultPath, with: .color(.red.opacity(0.9)), lineWidth: 4)
             for joint in BodyJoint.allCases {
                 guard let p = point(joint) else { continue }
                 context.fill(
                     Path(ellipseIn: CGRect(x: p.x - 4, y: p.y - 4, width: 8, height: 8)),
-                    with: .color(.green)
+                    with: .color(joint.faulted(by: faults) ? .red : .green)
                 )
             }
         }

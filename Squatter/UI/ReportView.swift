@@ -16,7 +16,7 @@ struct ReportView: View {
             VStack(alignment: .leading, spacing: 20) {
                 header
                 PlayerOverlayView(playback: playback, series: analysis.series)
-                    .clipShape(RoundedRectangle(cornerRadius: 12))
+                    .clipShape(RoundedRectangle(cornerRadius: 20))
                 if !analysis.reps.isEmpty {
                     repStrip
                 }
@@ -31,10 +31,10 @@ struct ReportView: View {
 
     private var header: some View {
         HStack(spacing: 16) {
-            scoreRing
+            ScoreRing(score: analysis.score, diameter: 84)
             VStack(alignment: .leading, spacing: 4) {
                 Text("\(analysis.reps.count) rep\(analysis.reps.count == 1 ? "" : "s")")
-                    .font(.title2.bold())
+                    .font(.system(.title2, design: .rounded).bold())
                 HStack(spacing: 6) {
                     if analysis.usedDepth {
                         Label("LiDAR depth", systemImage: "sensor.fill")
@@ -49,28 +49,6 @@ struct ReportView: View {
                 .foregroundStyle(.secondary)
             }
             Spacer()
-        }
-    }
-
-    private var scoreRing: some View {
-        ZStack {
-            Circle()
-                .stroke(.quaternary, lineWidth: 8)
-            Circle()
-                .trim(from: 0, to: CGFloat(analysis.score) / 100)
-                .stroke(scoreColor, style: StrokeStyle(lineWidth: 8, lineCap: .round))
-                .rotationEffect(.degrees(-90))
-            Text("\(analysis.score)")
-                .font(.title.bold())
-        }
-        .frame(width: 76, height: 76)
-    }
-
-    private var scoreColor: Color {
-        switch analysis.score {
-        case 85...: .green
-        case 60 ..< 85: .orange
-        default: .red
         }
     }
 
@@ -107,7 +85,7 @@ private struct RepCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("Rep \(rep.repNumber)")
-                .font(.subheadline.bold())
+                .font(.system(.subheadline, design: .rounded).bold())
             metricLine(
                 "Depth",
                 rep.hipBelowKneeDegrees >= AnalysisTuning.fullDepthDegrees ? "full" :
@@ -128,9 +106,9 @@ private struct RepCard: View {
                 .font(.caption2)
                 .foregroundStyle(.secondary)
         }
-        .padding(10)
-        .frame(width: 128, alignment: .leading)
-        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 10))
+        .padding(12)
+        .frame(width: 132, alignment: .leading)
+        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 16))
     }
 
     private func metricLine(_ label: String, _ value: String, good: Bool) -> some View {
@@ -162,9 +140,13 @@ struct FindingRow: View {
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
-        .padding(12)
+        .padding(14)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(color.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
+        .background(color.opacity(0.08), in: RoundedRectangle(cornerRadius: 16))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16)
+                .strokeBorder(color.opacity(0.15), lineWidth: 1)
+        )
     }
 
     private var icon: String {

@@ -115,11 +115,12 @@ struct HomeView: View {
             path.append(Route.setup)
         } label: {
             Label("Record a set", systemImage: "record.circle")
-                .font(.title3.bold())
+                .font(.system(.title3, design: .rounded).bold())
                 .padding(.horizontal, 20)
                 .padding(.vertical, 10)
         }
-        .buttonStyle(.borderedProminent)
+        .prominentActionStyle()
+        .tint(.red)
     }
 
     private func save(recording: RecordingResult, analysis: SquatAnalysis) {
@@ -163,9 +164,15 @@ private struct AttemptRow: View {
         HStack(spacing: 14) {
             Image(systemName: "video.badge.ellipsis")
                 .font(.title3)
-                .foregroundStyle(.orange)
+                .foregroundStyle(.white)
                 .frame(width: 44, height: 44)
-                .background(.orange.opacity(0.12), in: Circle())
+                .background(
+                    LinearGradient(
+                        colors: [.orange, .orange.opacity(0.65)],
+                        startPoint: .topLeading, endPoint: .bottomTrailing
+                    ),
+                    in: Circle()
+                )
             VStack(alignment: .leading, spacing: 2) {
                 Text(creationDate?.formatted(date: .abbreviated, time: .shortened) ?? "Recording")
                     .font(.subheadline.bold())
@@ -187,11 +194,7 @@ private struct SessionRow: View {
 
     var body: some View {
         HStack(spacing: 14) {
-            Text("\(session.score)")
-                .font(.title3.bold())
-                .foregroundStyle(scoreColor)
-                .frame(width: 44, height: 44)
-                .background(scoreColor.opacity(0.12), in: Circle())
+            ScoreRing(score: session.score, diameter: 44)
             VStack(alignment: .leading, spacing: 2) {
                 Text(session.date.formatted(date: .abbreviated, time: .shortened))
                     .font(.subheadline.bold())
@@ -207,14 +210,6 @@ private struct SessionRow: View {
             }
         }
         .padding(.vertical, 2)
-    }
-
-    private var scoreColor: Color {
-        switch session.score {
-        case 85...: .green
-        case 60 ..< 85: .orange
-        default: .red
-        }
     }
 }
 

@@ -46,11 +46,11 @@ struct AttemptReviewView: View {
                 ))
             } label: {
                 Label("Analyze this set", systemImage: "waveform.path.ecg")
-                    .font(.title3.bold())
+                    .font(.system(.title3, design: .rounded).bold())
                     .frame(maxWidth: .infinity)
                     .padding(.vertical, 6)
             }
-            .buttonStyle(.borderedProminent)
+            .prominentActionStyle()
         }
         .padding()
         .navigationTitle("Recorded set")

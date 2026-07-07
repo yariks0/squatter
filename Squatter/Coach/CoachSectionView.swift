@@ -45,9 +45,11 @@ struct CoachSectionView: View {
                 run()
             } label: {
                 Label("Get AI coaching", systemImage: "sparkles")
+                    .font(.system(.body, design: .rounded).bold())
                     .frame(maxWidth: .infinity)
+                    .padding(.vertical, 4)
             }
-            .buttonStyle(.borderedProminent)
+            .prominentActionStyle()
             Text("Sends this set's metrics and a few keyframes to Claude. Needs network and your Anthropic API key.")
                 .font(.caption)
                 .foregroundStyle(.secondary)

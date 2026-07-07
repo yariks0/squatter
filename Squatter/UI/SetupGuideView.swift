@@ -39,11 +39,11 @@ struct SetupGuideView: View {
 
                 Button(action: onContinue) {
                     Label("Open camera", systemImage: "arrow.right")
-                        .font(.title3.bold())
+                        .font(.system(.title3, design: .rounded).bold())
                         .frame(maxWidth: .infinity)
                         .padding(.vertical, 6)
                 }
-                .buttonStyle(.borderedProminent)
+                .prominentActionStyle()
                 .padding(.top, 8)
             }
             .padding()

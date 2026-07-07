@@ -13,6 +13,32 @@ struct FrameFaults: Equatable, Sendable {
 }
 
 enum FormFaultDetector {
+    /// Window around a shallow rep's bottom during which the missed depth is
+    /// shown on the legs.
+    private static let shallowBottomWindow: TimeInterval = 0.35
+
+    /// Frame faults with rep context: instantaneous checks (torso, valgus)
+    /// plus rep-level ones mapped to the moment they happen — missed depth
+    /// lights the legs around the bottom, a free-fall descent lights them
+    /// through the drop.
+    static func faults(in frame: JointFrame, at time: TimeInterval, reps: [RepMetrics]) -> FrameFaults {
+        var faults = faults(in: frame)
+        guard let rep = reps.first(where: { time >= $0.startTime && time <= $0.endTime })
+        else { return faults }
+        let bottomTime = rep.startTime + rep.eccentricSeconds
+        let shallow = rep.hipBelowKneeDegrees < AnalysisTuning.parallelToleranceDegrees
+        if shallow, abs(time - bottomTime) <= shallowBottomWindow {
+            faults.leftLeg = true
+            faults.rightLeg = true
+        }
+        let freeFall = rep.eccentricSeconds < AnalysisTuning.minimumEccentricSeconds
+        if freeFall, time <= bottomTime {
+            faults.leftLeg = true
+            faults.rightLeg = true
+        }
+        return faults
+    }
+
     static func faults(in frame: JointFrame) -> FrameFaults {
         var faults = FrameFaults()
 

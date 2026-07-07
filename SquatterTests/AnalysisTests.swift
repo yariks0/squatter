@@ -214,6 +214,36 @@ struct FormFaultTests {
         let faults = FormFaultDetector.faults(in: series.frames.first!)
         #expect(faults == .none)
     }
+
+    private func repFaults(_ generator: SyntheticSquat, at time: TimeInterval) -> FrameFaults {
+        let series = generator.series()
+        let reps = MetricsCalculator.metrics(for: RepSegmenter.segment(series), in: series)
+        let frame = series.frames.min { abs($0.time - time) < abs($1.time - time) }!
+        return FormFaultDetector.faults(in: frame, at: frame.time, reps: reps)
+    }
+
+    @Test func shallowRepBottomFaultsLegs() {
+        let generator = SyntheticSquat(repCount: 1, maxFemurAngle: 55)
+        let bottom = generator.pauseSeconds + generator.eccentricSeconds
+        let faults = repFaults(generator, at: bottom)
+        #expect(faults.leftLeg && faults.rightLeg)
+        #expect(!faults.torso)
+    }
+
+    @Test func deepRepBottomKeepsLegsGreen() {
+        let generator = SyntheticSquat(repCount: 1, maxFemurAngle: 105)
+        let bottom = generator.pauseSeconds + generator.eccentricSeconds
+        let faults = repFaults(generator, at: bottom)
+        #expect(faults == .none)
+    }
+
+    @Test func freeFallDescentFaultsLegs() {
+        var generator = SyntheticSquat(repCount: 1)
+        generator.eccentricSeconds = 0.35
+        let midDescent = generator.pauseSeconds + generator.eccentricSeconds / 2
+        let faults = repFaults(generator, at: midDescent)
+        #expect(faults.leftLeg && faults.rightLeg)
+    }
 }
 
 struct SmoothingTests {

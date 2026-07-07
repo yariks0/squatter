@@ -15,7 +15,7 @@ struct ReportView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 header
-                PlayerOverlayView(playback: playback, series: analysis.series)
+                PlayerOverlayView(playback: playback, series: analysis.series, reps: analysis.reps)
                     .clipShape(RoundedRectangle(cornerRadius: 20))
                 if !analysis.reps.isEmpty {
                     if #available(iOS 18.0, *) {

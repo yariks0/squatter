@@ -18,7 +18,11 @@ struct ReportView: View {
                 PlayerOverlayView(playback: playback, series: analysis.series)
                     .clipShape(RoundedRectangle(cornerRadius: 20))
                 if !analysis.reps.isEmpty {
-                    repStrip
+                    if #available(iOS 18.0, *) {
+                        RepTimelineView(analysis: analysis, playback: playback)
+                    } else {
+                        repStrip
+                    }
                 }
                 findingsSection
                 if !analysis.reps.isEmpty {

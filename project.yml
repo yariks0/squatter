@@ -24,6 +24,8 @@ targets:
         TARGETED_DEVICE_FAMILY: "1"
         SWIFT_STRICT_CONCURRENCY: complete
         CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: FN6PPV4267
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
   SquatterTests:
     type: bundle.unit-test
     platform: iOS

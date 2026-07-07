@@ -8,17 +8,20 @@ struct HomeView: View {
     @State private var path = NavigationPath()
     // RecordingResult isn't Hashable; the pending one lives alongside the path.
     @State private var pendingRecording: RecordingResult?
+    /// Recordings on disk that no saved session references yet.
+    @State private var unanalyzed: [URL] = []
 
     private enum Route: Hashable {
         case setup
         case record
         case analyze(id: UUID)
+        case attempt(fileName: String)
     }
 
     var body: some View {
         NavigationStack(path: $path) {
             Group {
-                if sessions.isEmpty {
+                if sessions.isEmpty && unanalyzed.isEmpty {
                     VStack {
                         ContentUnavailableView(
                             "No workouts yet",
@@ -30,12 +33,26 @@ struct HomeView: View {
                     }
                 } else {
                     List {
-                        ForEach(sessions) { session in
-                            NavigationLink(value: session.persistentModelID) {
-                                SessionRow(session: session)
+                        if !unanalyzed.isEmpty {
+                            Section("Recorded — not analyzed") {
+                                ForEach(unanalyzed, id: \.self) { url in
+                                    NavigationLink(value: Route.attempt(fileName: url.lastPathComponent)) {
+                                        AttemptRow(videoURL: url)
+                                    }
+                                }
+                                .onDelete(perform: deleteAttempts)
                             }
                         }
-                        .onDelete(perform: deleteSessions)
+                        if !sessions.isEmpty {
+                            Section("History") {
+                                ForEach(sessions) { session in
+                                    NavigationLink(value: session.persistentModelID) {
+                                        SessionRow(session: session)
+                                    }
+                                }
+                                .onDelete(perform: deleteSessions)
+                            }
+                        }
                     }
                     .safeAreaInset(edge: .bottom) {
                         recordButton
@@ -43,6 +60,7 @@ struct HomeView: View {
                     }
                 }
             }
+            .onAppear(perform: refreshUnanalyzed)
             .navigationTitle("Squatter")
             .navigationDestination(for: Route.self) { route in
                 switch route {
@@ -60,6 +78,22 @@ struct HomeView: View {
                         }
                     } else {
                         ContentUnavailableView("No recording", systemImage: "video.slash")
+                    }
+                case .attempt(let fileName):
+                    if let directory = try? FileLocations.recordingsDirectory() {
+                        let videoURL = directory.appendingPathComponent(fileName)
+                        let depthURL = videoURL.deletingPathExtension()
+                            .appendingPathExtension(DepthSidecar.fileExtension)
+                        AttemptReviewView(
+                            videoURL: videoURL,
+                            depthSidecarURL: FileManager.default.fileExists(atPath: depthURL.path)
+                                ? depthURL : nil
+                        ) { result in
+                            pendingRecording = result
+                            path.append(Route.analyze(id: UUID()))
+                        }
+                    } else {
+                        ContentUnavailableView("Recording unavailable", systemImage: "video.slash")
                     }
                 }
             }
@@ -106,6 +140,50 @@ struct HomeView: View {
             modelContext.delete(sessions[index])
         }
         try? modelContext.save()
+        refreshUnanalyzed()
+    }
+
+    private func refreshUnanalyzed() {
+        let linked = Set(sessions.map(\.videoFileName))
+        let all = (try? FileLocations.recordedVideoURLs()) ?? []
+        unanalyzed = all.filter { !linked.contains($0.lastPathComponent) }
+    }
+
+    private func deleteAttempts(at offsets: IndexSet) {
+        for index in offsets {
+            let videoURL = unanalyzed[index]
+            try? FileManager.default.removeItem(at: videoURL)
+            let depthURL = videoURL.deletingPathExtension()
+                .appendingPathExtension(DepthSidecar.fileExtension)
+            try? FileManager.default.removeItem(at: depthURL)
+        }
+        refreshUnanalyzed()
+    }
+}
+
+private struct AttemptRow: View {
+    let videoURL: URL
+
+    var body: some View {
+        HStack(spacing: 14) {
+            Image(systemName: "video.badge.ellipsis")
+                .font(.title3)
+                .foregroundStyle(.orange)
+                .frame(width: 44, height: 44)
+                .background(.orange.opacity(0.12), in: Circle())
+            VStack(alignment: .leading, spacing: 2) {
+                Text(creationDate?.formatted(date: .abbreviated, time: .shortened) ?? "Recording")
+                    .font(.subheadline.bold())
+                Text("Tap to review or analyze")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(.vertical, 2)
+    }
+
+    private var creationDate: Date? {
+        (try? videoURL.resourceValues(forKeys: [.creationDateKey]))?.creationDate
     }
 }
 

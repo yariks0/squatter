@@ -17,4 +17,17 @@ enum FileLocations {
     static func newRecordingBaseURL() throws -> URL {
         try recordingsDirectory().appendingPathComponent(UUID().uuidString)
     }
+
+    /// All recorded videos, newest first.
+    static func recordedVideoURLs() throws -> [URL] {
+        let files = try FileManager.default.contentsOfDirectory(
+            at: try recordingsDirectory(),
+            includingPropertiesForKeys: [.creationDateKey]
+        )
+        func created(_ url: URL) -> Date {
+            (try? url.resourceValues(forKeys: [.creationDateKey]))?.creationDate ?? .distantPast
+        }
+        return files.filter { $0.pathExtension == "mov" }
+            .sorted { created($0) > created($1) }
+    }
 }

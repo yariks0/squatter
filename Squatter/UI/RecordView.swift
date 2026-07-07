@@ -1,5 +1,7 @@
+import AudioToolbox
 import AVFoundation
 import SwiftUI
+import UIKit
 
 @MainActor
 @Observable
@@ -41,6 +43,8 @@ final class RecordingViewModel {
             try await camera.start()
             usesLiDAR = camera.hasLiDAR
             phase = .ready
+            // The lifter is meters away mid-set; don't let the screen lock.
+            UIApplication.shared.isIdleTimerDisabled = true
         } catch {
             phase = .failed(error.localizedDescription)
         }
@@ -61,6 +65,9 @@ final class RecordingViewModel {
     private func beginRecording() async {
         do {
             try await camera.startRecording()
+            // Audible confirmation that the set is being recorded (the
+            // system begin-record chime), heard from squat distance.
+            AudioServicesPlaySystemSound(1113)
             phase = .recording
             elapsed = 0
             timerTask = Task { [self] in
@@ -91,6 +98,7 @@ final class RecordingViewModel {
     func cancel() {
         timerTask?.cancel()
         camera.stop()
+        UIApplication.shared.isIdleTimerDisabled = false
     }
 }
 

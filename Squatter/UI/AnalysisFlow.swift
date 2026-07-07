@@ -16,19 +16,22 @@ final class AnalysisViewModel {
         self.recording = recording
     }
 
-    func run() async {
-        guard case .processing = phase else { return }
+    /// Runs once; calls `onFinished` exactly once on success.
+    func run(onFinished: (SquatAnalysis) -> Void) async {
+        guard case .processing(let started) = phase, started == 0 else { return }
         do {
             let series = try await PoseExtractor.extract(
                 videoURL: recording.videoURL,
                 depthSidecarURL: recording.depthSidecarURL,
                 progress: { fraction in
                     Task { @MainActor [weak self] in
-                        if case .processing = self?.phase { self?.phase = .processing(fraction) }
+                        if case .processing = self?.phase { self?.phase = .processing(max(fraction, 0.01)) }
                     }
                 }
             )
-            phase = .done(SquatAnalyzer.analyze(series))
+            let analysis = SquatAnalyzer.analyze(series)
+            phase = .done(analysis)
+            onFinished(analysis)
         } catch {
             phase = .failed(error.localizedDescription)
         }
@@ -64,7 +67,6 @@ struct AnalysisView: View {
                 }
             case .done(let analysis):
                 ReportView(analysis: analysis, videoURL: model.recording.videoURL)
-                    .onAppear { onFinished(analysis) }
             case .failed(let message):
                 ContentUnavailableView(
                     "Analysis failed",
@@ -73,7 +75,7 @@ struct AnalysisView: View {
                 )
             }
         }
-        .task { await model.run() }
+        .task { await model.run(onFinished: onFinished) }
         .navigationTitle("Set report")
         .navigationBarTitleDisplayMode(.inline)
     }

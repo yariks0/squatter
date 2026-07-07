@@ -1,0 +1,43 @@
+import Foundation
+import SwiftData
+
+/// A saved set: pointers to the video (and optional depth sidecar) plus the
+/// full analysis encoded as JSON, so reports re-render without re-extracting
+/// pose and can be re-scored after threshold tuning.
+@Model
+final class WorkoutSession {
+    var date: Date
+    var videoFileName: String
+    var depthFileName: String?
+    var score: Int
+    var repCount: Int
+    var usedLiDAR: Bool
+    var analysisData: Data
+
+    init(date: Date, recording: RecordingResult, analysis: SquatAnalysis) throws {
+        self.date = date
+        self.videoFileName = recording.videoURL.lastPathComponent
+        self.depthFileName = recording.depthSidecarURL?.lastPathComponent
+        self.score = analysis.score
+        self.repCount = analysis.reps.count
+        self.usedLiDAR = analysis.usedDepth
+        self.analysisData = try JSONEncoder().encode(analysis)
+    }
+
+    var videoURL: URL? {
+        try? FileLocations.recordingsDirectory().appendingPathComponent(videoFileName)
+    }
+
+    func analysis() -> SquatAnalysis? {
+        try? JSONDecoder().decode(SquatAnalysis.self, from: analysisData)
+    }
+
+    /// Removes the recording files backing this session.
+    func deleteFiles() {
+        guard let directory = try? FileLocations.recordingsDirectory() else { return }
+        try? FileManager.default.removeItem(at: directory.appendingPathComponent(videoFileName))
+        if let depthFileName {
+            try? FileManager.default.removeItem(at: directory.appendingPathComponent(depthFileName))
+        }
+    }
+}

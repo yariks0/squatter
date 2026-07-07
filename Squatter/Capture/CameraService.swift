@@ -1,7 +1,7 @@
 import AVFoundation
 import CoreMedia
 
-struct RecordingResult: Sendable {
+struct RecordingResult: Sendable, Hashable {
     let videoURL: URL
     let depthSidecarURL: URL?
     let duration: TimeInterval

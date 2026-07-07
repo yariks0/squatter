@@ -6,15 +6,16 @@ struct HomeView: View {
     @Query(sort: \WorkoutSession.date, order: .reverse) private var sessions: [WorkoutSession]
 
     @State private var path = NavigationPath()
-    // RecordingResult isn't Hashable; the pending one lives alongside the path.
-    @State private var pendingRecording: RecordingResult?
     /// Recordings on disk that no saved session references yet.
     @State private var unanalyzed: [URL] = []
 
+    // The recording rides inside the route: passing it through view state
+    // races the navigation push and the destination can render before the
+    // write lands ("No recording").
     private enum Route: Hashable {
         case setup
         case record
-        case analyze(id: UUID)
+        case analyze(RecordingResult)
         case attempt(fileName: String)
     }
 
@@ -68,16 +69,11 @@ struct HomeView: View {
                     SetupGuideView { path.append(Route.record) }
                 case .record:
                     RecordView { result in
-                        pendingRecording = result
-                        path.append(Route.analyze(id: UUID()))
+                        path.append(Route.analyze(result))
                     }
-                case .analyze:
-                    if let recording = pendingRecording {
-                        AnalysisView(recording: recording) { analysis in
-                            save(recording: recording, analysis: analysis)
-                        }
-                    } else {
-                        ContentUnavailableView("No recording", systemImage: "video.slash")
+                case .analyze(let recording):
+                    AnalysisView(recording: recording) { analysis in
+                        save(recording: recording, analysis: analysis)
                     }
                 case .attempt(let fileName):
                     if let directory = try? FileLocations.recordingsDirectory() {
@@ -89,8 +85,7 @@ struct HomeView: View {
                             depthSidecarURL: FileManager.default.fileExists(atPath: depthURL.path)
                                 ? depthURL : nil
                         ) { result in
-                            pendingRecording = result
-                            path.append(Route.analyze(id: UUID()))
+                            path.append(Route.analyze(result))
                         }
                     } else {
                         ContentUnavailableView("Recording unavailable", systemImage: "video.slash")

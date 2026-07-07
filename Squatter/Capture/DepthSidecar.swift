@@ -1,18 +1,19 @@
 import AVFoundation
 import ImageIO
 
-/// Sidecar file storing LiDAR depth frames alongside a recorded video, so the
-/// offline analysis pipeline can hand `AVDepthData` to Vision for
-/// depth-assisted 3D body pose. Format (little-endian):
+/// Sidecar file storing LiDAR depth frames alongside a recorded video, used
+/// by the offline analysis pipeline to measure the lifter's metric scale.
+/// Format (little-endian):
 ///
 ///   "SQDP" magic, UInt32 version
+///   v2+: Float32 camera focal length in pixels (0 = unknown)
 ///   repeated frames:
 ///     Float64 presentationTimeSeconds
 ///     UInt32 descriptionPlistLength, UInt32 compressedDepthLength
 ///     [description plist bytes][zlib-compressed DepthFloat16 pixel bytes]
 enum DepthSidecar {
     static let magic = Data("SQDP".utf8)
-    static let version: UInt32 = 1
+    static let version: UInt32 = 2
     static let fileExtension = "depth"
 }
 
@@ -24,12 +25,16 @@ struct DepthSidecarFrame {
 final class DepthSidecarWriter {
     private let handle: FileHandle
     private(set) var frameCount = 0
+    /// Camera focal length in pixels, from the capture connection's intrinsic
+    /// matrix. Set any time before `finish()`; 0 = unknown.
+    var focalLengthPixels: Float = 0
 
     init(url: URL) throws {
         FileManager.default.createFile(atPath: url.path, contents: nil)
         handle = try FileHandle(forWritingTo: url)
         var header = DepthSidecar.magic
         header.appendLittleEndian(DepthSidecar.version)
+        header.appendLittleEndian(focalLengthPixels.bitPattern)
         try handle.write(contentsOf: header)
     }
 
@@ -59,6 +64,12 @@ final class DepthSidecarWriter {
     }
 
     func finish() throws {
+        // The focal length arrives with the first video frame, after the
+        // header was written — patch it in before closing.
+        try handle.seek(toOffset: UInt64(DepthSidecar.magic.count) + 4)
+        var focal = Data()
+        focal.appendLittleEndian(focalLengthPixels.bitPattern)
+        try handle.write(contentsOf: focal)
         try handle.close()
     }
 }
@@ -67,13 +78,30 @@ final class DepthSidecarWriter {
 final class DepthSidecarReader {
     private let data: Data
     private var offset: Int
+    /// Camera focal length in pixels; nil for v1 sidecars or when the capture
+    /// connection did not deliver intrinsics.
+    let focalLengthPixels: Float?
 
     init(url: URL) throws {
-        data = try Data(contentsOf: url, options: .mappedIfSafe)
+        let data = try Data(contentsOf: url, options: .mappedIfSafe)
         guard data.count >= 8, data.prefix(4) == DepthSidecar.magic else {
             throw CocoaError(.fileReadCorruptFile)
         }
-        offset = 8
+        let version = UInt32(littleEndian: data.subdata(in: 4 ..< 8)
+            .withUnsafeBytes { $0.loadUnaligned(as: UInt32.self) })
+        guard version <= DepthSidecar.version else {
+            throw CocoaError(.fileReadCorruptFile)
+        }
+        if version >= 2, data.count >= 12 {
+            let focal = Float(bitPattern: UInt32(littleEndian: data.subdata(in: 8 ..< 12)
+                .withUnsafeBytes { $0.loadUnaligned(as: UInt32.self) }))
+            focalLengthPixels = focal > 0 ? focal : nil
+            offset = 12
+        } else {
+            focalLengthPixels = nil
+            offset = 8
+        }
+        self.data = data
     }
 
     func next() -> DepthSidecarFrame? {

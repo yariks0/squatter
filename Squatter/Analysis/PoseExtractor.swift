@@ -57,7 +57,7 @@ enum PoseExtractor {
 
         var frames: [JointFrame] = []
         var heights: [Float] = []
-        var scaleRatios: [Double] = []
+        var heightSamples: [Double] = []
         var usedDepth = false
         var lastAnalyzedTime = -Double.infinity
         let minInterval = 1.0 / targetFrameRate - 1e-6
@@ -107,24 +107,34 @@ enum PoseExtractor {
             // Instead LiDAR provides what it is actually good for here: the
             // metric scale, measured directly off the depth map below.
             let request = VNDetectHumanBodyPose3DRequest()
+            let request2D = VNDetectHumanBodyPoseRequest()
             let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, orientation: .up)
-            try? handler.perform([request])
+            try? handler.perform([request, request2D])
             if let observation = request.results?.first {
-                frames.append(frame(from: observation, at: time))
+                let jointFrame = frame(from: observation, pose2D: request2D.results?.first, at: time)
+                frames.append(jointFrame)
                 if observation.bodyHeight > 0 { heights.append(Float(observation.bodyHeight)) }
-                if let depthData, let ratio = depthScaleRatio(observation: observation, depthData: depthData) {
-                    scaleRatios.append(ratio)
+                if let depthData, let focal = depthReader?.focalLengthPixels,
+                   let sample = measuredHeight(
+                       imagePoints: jointFrame.imagePoints,
+                       depthData: depthData,
+                       videoPixelHeight: CVPixelBufferGetHeight(pixelBuffer),
+                       focalPixels: Double(focal)
+                   ) {
+                    heightSamples.append(sample)
                 }
             }
             if windowDuration > 0 { progress?(min(max(time - windowStart, 0) / windowDuration, 1)) }
         }
 
-        // LiDAR scale correction: Vision's RGB-only skeleton is metrically
-        // scaled by its body-height guess; the measured/estimated camera
-        // distance ratio corrects that guess with real geometry.
+        // Vision's RGB-only bodyHeight is only a prior (~1.80 for any adult);
+        // with LiDAR distance and the camera's focal length the height is
+        // measured directly instead. Squatting shrinks the pixel span, so
+        // standing frames sit at the top of the sample distribution.
         var bodyHeight = heights.isEmpty ? nil : heights.sorted()[heights.count / 2]
-        if let height = bodyHeight, scaleRatios.count >= minimumScaleSamples {
-            bodyHeight = height * Float(scaleRatios.sorted()[scaleRatios.count / 2])
+        if heightSamples.count >= minimumHeightSamples {
+            let sorted = heightSamples.sorted()
+            bodyHeight = Float(sorted[min(sorted.count - 1, Int(Double(sorted.count) * 0.9))])
             usedDepth = true
         }
         return JointSeries(
@@ -134,49 +144,64 @@ enum PoseExtractor {
         )
     }
 
-    /// Sample count below which the depth-based scale is considered noise.
-    private static let minimumScaleSamples = 5
-    /// LiDAR measures the near torso surface; the root joint is the pelvis
-    /// center, roughly this much deeper along the viewing ray.
+    /// Sample count below which the depth-based height is considered noise.
+    private static let minimumHeightSamples = 5
+    /// LiDAR measures the near torso surface; the skeleton's vertical plane
+    /// runs roughly this much deeper along the viewing ray.
     private static let torsoSurfaceOffset = 0.13
+    /// Ankle joints sit about this far above the floor.
+    private static let ankleHeightOffset = 0.07
 
-    /// LiDAR-measured distance at the root joint's image point divided by
-    /// Vision's estimated camera distance to the root. The median of this
-    /// ratio over a set corrects the skeleton's metric scale.
-    private static func depthScaleRatio(
-        observation: VNHumanBodyPose3DObservation,
-        depthData: AVDepthData
+    /// Pinhole height measurement: the skeleton's vertical pixel span times
+    /// the LiDAR-measured distance, divided by the camera's focal length.
+    private static func measuredHeight(
+        imagePoints: [BodyJoint: SIMD2<Float>],
+        depthData: AVDepthData,
+        videoPixelHeight: Int,
+        focalPixels: Double
     ) -> Double? {
-        guard depthData.depthDataType == kCVPixelFormatType_DepthFloat16,
-              let rootPoint = try? observation.pointInImage(.root) else { return nil }
+        guard focalPixels > 100,
+              let top = imagePoints[.topHead],
+              let leftAnkle = imagePoints[.leftAnkle],
+              let rightAnkle = imagePoints[.rightAnkle],
+              let root = imagePoints[.root],
+              let surface = depthValue(depthData, x: Double(root.x), y: Double(root.y))
+        else { return nil }
+        // Plausible camera→lifter distances only.
+        let distance = surface + torsoSurfaceOffset
+        guard distance > 0.5, distance < 8 else { return nil }
 
+        // Vertical span only: the camera's 45° yaw foreshortens horizontal
+        // extents but leaves vertical ones intact.
+        let span = Double(top.y - (leftAnkle.y + rightAnkle.y) / 2) * Double(videoPixelHeight)
+        guard span > 0 else { return nil }
+        let height = span * distance / focalPixels + ankleHeightOffset
+        // Outside human range = depth hit the background or a foreground
+        // object, or the lifter is bent over; standing frames win the
+        // percentile anyway.
+        return (1.0 ... 2.3).contains(height) ? height : nil
+    }
+
+    /// Depth map value at a Vision-normalized point (bottom-left origin), in
+    /// meters; nil for LiDAR holes.
+    private static func depthValue(_ depthData: AVDepthData, x: Double, y: Double) -> Double? {
+        guard depthData.depthDataType == kCVPixelFormatType_DepthFloat16 else { return nil }
         let map = depthData.depthDataMap
         CVPixelBufferLockBaseAddress(map, .readOnly)
         defer { CVPixelBufferUnlockBaseAddress(map, .readOnly) }
         guard let base = CVPixelBufferGetBaseAddress(map) else { return nil }
         let width = CVPixelBufferGetWidth(map)
         let height = CVPixelBufferGetHeight(map)
-        // Vision image points are normalized with a bottom-left origin;
-        // pixel buffers have row 0 at the top.
-        let x = min(max(Int(rootPoint.x * Double(width - 1)), 0), width - 1)
-        let y = min(max(Int((1 - rootPoint.y) * Double(height - 1)), 0), height - 1)
-        let row = base + y * CVPixelBufferGetBytesPerRow(map)
-        let surface = Double(row.loadUnaligned(fromByteOffset: x * 2, as: Float16.self))
-        // Plausible camera→lifter distances only; LiDAR holes are NaN/0.
-        guard surface.isFinite, surface > 0.5, surface < 8 else { return nil }
-        let measured = surface + torsoSurfaceOffset
-
-        let camera = observation.cameraOriginMatrix.columns.3
-        let estimated = Double(simd_length(SIMD3(camera.x, camera.y, camera.z)))
-        guard estimated > 0.5 else { return nil }
-        let ratio = measured / estimated
-        // A sample far outside plausible height-prior error means the depth
-        // hit the background or a foreground object, not the lifter.
-        return (0.6 ... 1.4).contains(ratio) ? ratio : nil
+        let column = min(max(Int(x * Double(width - 1)), 0), width - 1)
+        let row = min(max(Int((1 - y) * Double(height - 1)), 0), height - 1)
+        let rowBase = base + row * CVPixelBufferGetBytesPerRow(map)
+        let value = Double(rowBase.loadUnaligned(fromByteOffset: column * 2, as: Float16.self))
+        return value.isFinite && value > 0 ? value : nil
     }
 
     private static func frame(
         from observation: VNHumanBodyPose3DObservation,
+        pose2D: VNHumanBodyPoseObservation?,
         at time: TimeInterval
     ) -> JointFrame {
         var positions: [BodyJoint: SIMD3<Float>] = [:]
@@ -190,8 +215,41 @@ enum PoseExtractor {
                 imagePoints[joint] = SIMD2(Float(imagePoint.x), Float(imagePoint.y))
             }
         }
+        // The 3D observation's image points are its model skeleton
+        // re-projected through Vision's *assumed* camera, so they drift off
+        // the body toward the frame edges (worst at the legs). The 2D
+        // detector returns actually-detected pixel locations — prefer those
+        // for anything drawn or measured in image space.
+        if let detected = try? pose2D?.recognizedPoints(.all) {
+            func detectedPoint(_ name: VNHumanBodyPoseObservation.JointName) -> SIMD2<Float>? {
+                guard let point = detected[name], point.confidence > 0.3 else { return nil }
+                return SIMD2(Float(point.location.x), Float(point.location.y))
+            }
+            for (joint, name) in Self.pose2DNames {
+                if let point = detectedPoint(name) { imagePoints[joint] = point }
+            }
+            if let root = detectedPoint(.root), let neck = detectedPoint(.neck) {
+                imagePoints[.spine] = (root + neck) / 2
+                // The 2D set has no head-top joint; extend past the nose so
+                // the drawn head segment still covers the head.
+                if let nose = detectedPoint(.nose) {
+                    imagePoints[.centerHead] = nose
+                    imagePoints[.topHead] = nose + (nose - neck) * 0.6
+                }
+            }
+        }
         return JointFrame(time: time, positions: positions, imagePoints: imagePoints)
     }
+
+    private static let pose2DNames: [(BodyJoint, VNHumanBodyPoseObservation.JointName)] = [
+        (.root, .root), (.centerShoulder, .neck),
+        (.leftShoulder, .leftShoulder), (.rightShoulder, .rightShoulder),
+        (.leftElbow, .leftElbow), (.rightElbow, .rightElbow),
+        (.leftWrist, .leftWrist), (.rightWrist, .rightWrist),
+        (.leftHip, .leftHip), (.rightHip, .rightHip),
+        (.leftKnee, .leftKnee), (.rightKnee, .rightKnee),
+        (.leftAnkle, .leftAnkle), (.rightAnkle, .rightAnkle),
+    ]
 }
 
 private extension BodyJoint {

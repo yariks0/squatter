@@ -1,5 +1,6 @@
 import AVFoundation
 import CoreMedia
+import simd
 
 struct RecordingResult: Sendable, Hashable {
     let videoURL: URL
@@ -150,9 +151,16 @@ final class CameraService: NSObject, @unchecked Sendable {
             videoOutput.setSampleBufferDelegate(self, queue: dataQueue)
         }
 
-        if let connection = videoOutput.connection(with: .video),
-           connection.isVideoRotationAngleSupported(90) {
-            connection.videoRotationAngle = 90 // portrait
+        if let connection = videoOutput.connection(with: .video) {
+            if connection.isVideoRotationAngleSupported(90) {
+                connection.videoRotationAngle = 90 // portrait
+            }
+            // Focal length (from the intrinsic matrix sample-buffer
+            // attachment) turns LiDAR depth into a metric height measurement
+            // at analysis time. fx is in pixels, so it survives the rotation.
+            if connection.isCameraIntrinsicMatrixDeliverySupported {
+                connection.isCameraIntrinsicMatrixDeliveryEnabled = true
+            }
         }
         // Depth must match the video's portrait orientation: the analysis
         // samples the depth map at joint image points, so both must share one
@@ -265,6 +273,16 @@ final class CameraService: NSObject, @unchecked Sendable {
         }
         if input.isReadyForMoreMediaData, input.append(videoSampleBuffer) {
             lastVideoTime = time
+        }
+
+        if let depthWriter, depthWriter.focalLengthPixels == 0,
+           let attachment = CMGetAttachment(
+               videoSampleBuffer,
+               key: kCMSampleBufferAttachmentKey_CameraIntrinsicMatrix,
+               attachmentModeOut: nil
+           ) as? Data {
+            let matrix = attachment.withUnsafeBytes { $0.loadUnaligned(as: matrix_float3x3.self) }
+            depthWriter.focalLengthPixels = matrix.columns.0.x
         }
 
         if let depthData, let depthTime, let depthWriter, let sessionStartTime {

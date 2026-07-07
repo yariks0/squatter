@@ -24,6 +24,7 @@ enum PoseExtractor {
     static func extract(
         videoURL: URL,
         depthSidecarURL: URL?,
+        timeRange: ClosedRange<TimeInterval>? = nil,
         progress: (@Sendable (Double) -> Void)? = nil
     ) async throws -> JointSeries {
         let asset = AVURLAsset(url: videoURL)
@@ -31,6 +32,7 @@ enum PoseExtractor {
             throw PoseExtractionError.noVideoTrack
         }
         let duration = try await asset.load(.duration).seconds
+        let movieStart = try await track.load(.timeRange).start.seconds
         let reader = try AVAssetReader(asset: asset)
         let output = AVAssetReaderTrackOutput(track: track, outputSettings: [
             kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
@@ -38,6 +40,12 @@ enum PoseExtractor {
         output.alwaysCopiesSampleData = false
         guard reader.canAdd(output) else { throw PoseExtractionError.readerFailed }
         reader.add(output)
+        if let timeRange {
+            reader.timeRange = CMTimeRange(
+                start: CMTime(seconds: movieStart + timeRange.lowerBound, preferredTimescale: 600),
+                duration: CMTime(seconds: timeRange.upperBound - timeRange.lowerBound, preferredTimescale: 600)
+            )
+        }
         guard reader.startReading() else { throw PoseExtractionError.readerFailed }
         defer { reader.cancelReading() }
 
@@ -49,16 +57,19 @@ enum PoseExtractor {
         var frames: [JointFrame] = []
         var heights: [Float] = []
         var usedDepth = false
-        var firstTime: Double?
         var lastAnalyzedTime = -Double.infinity
         let minInterval = 1.0 / targetFrameRate - 1e-6
+        // Progress is reported over the analyzed window; frame times stay on
+        // the movie timeline so trimmed analyses still sync with playback of
+        // the full recording (overlays, rep timeline, keyframes).
+        let windowStart = timeRange?.lowerBound ?? 0
+        let windowDuration = timeRange.map { $0.upperBound - $0.lowerBound } ?? duration
 
         while let sample = output.copyNextSampleBuffer() {
             try Task.checkCancellation()
             guard let pixelBuffer = CMSampleBufferGetImageBuffer(sample) else { continue }
             let presentationTime = CMSampleBufferGetPresentationTimeStamp(sample).seconds
-            if firstTime == nil { firstTime = presentationTime }
-            let time = presentationTime - firstTime!
+            let time = presentationTime - movieStart
             guard time - lastAnalyzedTime >= minInterval else { continue }
             lastAnalyzedTime = time
 
@@ -98,7 +109,7 @@ enum PoseExtractor {
                 if observation.bodyHeight > 0 { heights.append(Float(observation.bodyHeight)) }
                 if depthData != nil { usedDepth = true }
             }
-            if duration > 0 { progress?(min(time / duration, 1)) }
+            if windowDuration > 0 { progress?(min(max(time - windowStart, 0) / windowDuration, 1)) }
         }
 
         return JointSeries(

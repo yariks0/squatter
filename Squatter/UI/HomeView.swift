@@ -15,6 +15,8 @@ struct HomeView: View {
     private enum Route: Hashable {
         case setup
         case record
+        /// Post-record review: play back and optionally trim before analysis.
+        case review(RecordingResult)
         case analyze(RecordingResult)
         case attempt(fileName: String)
     }
@@ -69,6 +71,13 @@ struct HomeView: View {
                     SetupGuideView { path.append(Route.record) }
                 case .record:
                     RecordView { result in
+                        path.append(Route.review(result))
+                    }
+                case .review(let recording):
+                    AttemptReviewView(
+                        videoURL: recording.videoURL,
+                        depthSidecarURL: recording.depthSidecarURL
+                    ) { result in
                         path.append(Route.analyze(result))
                     }
                 case .analyze(let recording):

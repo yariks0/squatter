@@ -6,6 +6,22 @@ struct RecordingResult: Sendable, Hashable {
     let depthSidecarURL: URL?
     let duration: TimeInterval
     let usedLiDAR: Bool
+    /// Movie-timeline window to analyze (user trim); nil = whole recording.
+    var analysisRange: ClosedRange<TimeInterval>?
+
+    init(
+        videoURL: URL,
+        depthSidecarURL: URL?,
+        duration: TimeInterval,
+        usedLiDAR: Bool,
+        analysisRange: ClosedRange<TimeInterval>? = nil
+    ) {
+        self.videoURL = videoURL
+        self.depthSidecarURL = depthSidecarURL
+        self.duration = duration
+        self.usedLiDAR = usedLiDAR
+        self.analysisRange = analysisRange
+    }
 }
 
 /// Owns the capture session and recording pipeline. On LiDAR devices the

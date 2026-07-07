@@ -23,6 +23,7 @@ final class AnalysisViewModel {
             let series = try await PoseExtractor.extract(
                 videoURL: recording.videoURL,
                 depthSidecarURL: recording.depthSidecarURL,
+                timeRange: recording.analysisRange,
                 progress: { fraction in
                     Task { @MainActor [weak self] in
                         if case .processing = self?.phase { self?.phase = .processing(max(fraction, 0.01)) }

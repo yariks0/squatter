@@ -1,0 +1,48 @@
+name: Squatter
+options:
+  bundleIdPrefix: com.yarik
+  deploymentTarget:
+    iOS: "17.0"
+  createIntermediateGroups: true
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    IPHONEOS_DEPLOYMENT_TARGET: "17.0"
+targets:
+  Squatter:
+    type: application
+    platform: iOS
+    sources:
+      - Squatter
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.yarik.squatter
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_NSCameraUsageDescription: "Squatter records your set with the camera (and LiDAR depth when available) to analyze your squat form."
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        INFOPLIST_KEY_UISupportedInterfaceOrientations: "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
+        TARGETED_DEVICE_FAMILY: "1"
+        SWIFT_STRICT_CONCURRENCY: complete
+        CODE_SIGN_STYLE: Automatic
+  SquatterTests:
+    type: bundle.unit-test
+    platform: iOS
+    sources:
+      - SquatterTests
+    dependencies:
+      - target: Squatter
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
+schemes:
+  Squatter:
+    build:
+      targets:
+        Squatter: all
+        SquatterTests: [test]
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets:
+        - SquatterTests

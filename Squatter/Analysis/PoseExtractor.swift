@@ -72,8 +72,18 @@ enum PoseExtractor {
                abs(next.time - time) < abs((closestDepth?.time ?? -.infinity) - time) {
                 closestDepth = next
             }
-            let depthData: AVDepthData? = closestDepth.flatMap {
+            var depthData: AVDepthData? = closestDepth.flatMap {
                 abs($0.time - time) <= depthTolerance ? $0.depthData : nil
+            }
+            // A depth map whose orientation disagrees with the video frame
+            // makes Vision's camera registration abort the process. Sidecars
+            // recorded before the depth connection was rotated are landscape;
+            // drop depth for such frames and analyze RGB-only.
+            if let depth = depthData {
+                let map = depth.depthDataMap
+                let depthPortrait = CVPixelBufferGetHeight(map) >= CVPixelBufferGetWidth(map)
+                let videoPortrait = CVPixelBufferGetHeight(pixelBuffer) >= CVPixelBufferGetWidth(pixelBuffer)
+                if depthPortrait != videoPortrait { depthData = nil }
             }
 
             let request = VNDetectHumanBodyPose3DRequest()

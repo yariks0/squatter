@@ -138,6 +138,13 @@ final class CameraService: NSObject, @unchecked Sendable {
            connection.isVideoRotationAngleSupported(90) {
             connection.videoRotationAngle = 90 // portrait
         }
+        // Depth must match the video's portrait orientation: feeding Vision a
+        // landscape depth map with a portrait frame crashes its 3D-pose
+        // camera registration (assert in PoseRefiner::refinePose).
+        if let depthConnection = depthOutput?.connection(with: .depthData),
+           depthConnection.isVideoRotationAngleSupported(90) {
+            depthConnection.videoRotationAngle = 90
+        }
     }
 
     private func preferredDepthFormat(for device: AVCaptureDevice) -> AVCaptureDevice.Format? {

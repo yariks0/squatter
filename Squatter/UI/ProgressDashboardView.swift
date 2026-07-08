@@ -11,26 +11,45 @@ import SwiftUI
 struct ProgressDashboard: View {
     let sessions: [WorkoutSession]
 
+    /// One point per (day, lift): the reps chart stacks the two lifts,
+    /// the score chart draws one line per lift.
     private struct DayStat: Identifiable {
         let day: Date
+        let activity: ActivityType
         let reps: Int
         let averageScore: Double
-        var id: Date { day }
+        var id: String { "\(day.timeIntervalSinceReferenceDate)-\(activity.rawValue)" }
+    }
+
+    private struct DayKey: Hashable {
+        let day: Date
+        let activity: ActivityType
     }
 
     private var calendar: Calendar { .current }
 
     private var days: [DayStat] {
-        let grouped = Dictionary(grouping: sessions) { calendar.startOfDay(for: $0.date) }
-        let stats = grouped.map { day, sessions in
+        let grouped = Dictionary(grouping: sessions) { session in
+            DayKey(day: calendar.startOfDay(for: session.date), activity: session.activity)
+        }
+        let stats = grouped.map { key, sessions in
             let reps = sessions.reduce(0) { $0 + $1.repCount }
             let scoreTotal = sessions.reduce(0) { $0 + $1.score }
             return DayStat(
-                day: day, reps: reps,
+                day: key.day, activity: key.activity, reps: reps,
                 averageScore: Double(scoreTotal) / Double(sessions.count)
             )
         }
         return stats.sorted { $0.day < $1.day }
+    }
+
+    /// Series color per lift, shared by both charts and the legend:
+    /// Soul Red carries the squat, titanium the bench.
+    private var liftColorScale: KeyValuePairs<String, Color> {
+        [
+            ActivityType.squat.displayName: Kodo.soulRedBright,
+            ActivityType.benchPress.displayName: Kodo.titanium,
+        ]
     }
 
     /// Charts share one x-domain so the bars and the trend line align. Always
@@ -116,24 +135,21 @@ struct ProgressDashboard: View {
         KodoCard {
             VStack(alignment: .leading, spacing: 10) {
                 KodoCaption("Reps per day")
-                Chart(days) { day in
+                Chart(days) { stat in
                     BarMark(
-                        x: .value("Day", day.day, unit: .day),
-                        y: .value("Reps", day.reps),
+                        x: .value("Day", stat.day, unit: .day),
+                        y: .value("Reps", stat.reps),
                         width: .fixed(16)
                     )
-                    .foregroundStyle(
-                        LinearGradient(
-                            colors: [Kodo.titanium, Kodo.titanium.opacity(0.55)],
-                            startPoint: .top, endPoint: .bottom
-                        )
-                    )
+                    .foregroundStyle(by: .value("Lift", stat.activity.displayName))
                     .cornerRadius(3)
                 }
+                .chartForegroundStyleScale(liftColorScale)
+                .chartLegend(position: .top, alignment: .trailing)
                 .chartXScale(domain: xDomain)
                 .chartYAxis { kodoAxis(values: .automatic(desiredCount: 3)) }
                 .chartXAxis { kodoDayAxis }
-                .frame(height: 120)
+                .frame(height: 130)
             }
         }
     }
@@ -143,54 +159,51 @@ struct ProgressDashboard: View {
             VStack(alignment: .leading, spacing: 10) {
                 KodoCaption("Form score")
                 Chart {
-                    ForEach(days) { day in
+                    ForEach(days) { stat in
                         LineMark(
-                            x: .value("Day", day.day, unit: .day),
-                            y: .value("Score", day.averageScore)
+                            x: .value("Day", stat.day, unit: .day),
+                            y: .value("Score", stat.averageScore),
+                            series: .value("Lift", stat.activity.displayName)
                         )
                         .lineStyle(StrokeStyle(lineWidth: 2.5, lineCap: .round, lineJoin: .round))
                         .interpolationMethod(.monotone)
-                        .foregroundStyle(
-                            LinearGradient(
-                                colors: [Kodo.soulRed.opacity(0.75), Kodo.soulRedBright],
-                                startPoint: .leading, endPoint: .trailing
-                            )
-                        )
-                        AreaMark(
-                            x: .value("Day", day.day, unit: .day),
-                            y: .value("Score", day.averageScore)
-                        )
-                        .interpolationMethod(.monotone)
-                        .foregroundStyle(
-                            LinearGradient(
-                                colors: [Kodo.soulRed.opacity(0.22), .clear],
-                                startPoint: .top, endPoint: .bottom
-                            )
-                        )
+                        .foregroundStyle(by: .value("Lift", stat.activity.displayName))
                     }
-                    if let last = days.last {
+                    // Latest point per lift, graded like the score rings;
+                    // only the overall latest carries the value label.
+                    ForEach(latestPerActivity) { stat in
                         PointMark(
-                            x: .value("Day", last.day, unit: .day),
-                            y: .value("Score", last.averageScore)
+                            x: .value("Day", stat.day, unit: .day),
+                            y: .value("Score", stat.averageScore)
                         )
                         .symbolSize(70)
-                        .foregroundStyle(Kodo.grade(for: Int(last.averageScore.rounded())))
+                        .foregroundStyle(Kodo.grade(for: Int(stat.averageScore.rounded())))
                         .annotation(
                             position: .topLeading, spacing: 8,
                             overflowResolution: .init(x: .fit(to: .chart), y: .fit(to: .chart))
                         ) {
-                            Text("\(Int(last.averageScore.rounded()))")
-                                .font(.system(.caption, design: .rounded).bold())
-                                .foregroundStyle(Kodo.inkPrimary)
+                            if stat.id == days.last?.id {
+                                Text("\(Int(stat.averageScore.rounded()))")
+                                    .font(.system(.caption, design: .rounded).bold())
+                                    .foregroundStyle(Kodo.inkPrimary)
+                            }
                         }
                     }
                 }
+                .chartForegroundStyleScale(liftColorScale)
+                .chartLegend(position: .top, alignment: .trailing)
                 .chartXScale(domain: xDomain)
                 .chartYScale(domain: 0 ... 100)
                 .chartYAxis { kodoAxis(values: .automatic(desiredCount: 3)) }
                 .chartXAxis { kodoDayAxis }
-                .frame(height: 120)
+                .frame(height: 130)
             }
+        }
+    }
+
+    private var latestPerActivity: [DayStat] {
+        ActivityType.allCases.compactMap { activity in
+            days.last { $0.activity == activity }
         }
     }
 
@@ -296,10 +309,13 @@ private func zip<A, B>(_ a: A?, _ b: B?) -> (A, B)? {
 
 #if DEBUG
 #Preview {
-    // Two weeks of mock history: rising volume, a mid-week form dip.
-    let profile: [(daysAgo: Int, reps: Int, score: Int)] = [
-        (13, 5, 62), (11, 6, 68), (9, 8, 74), (7, 6, 58),
-        (5, 8, 71), (3, 10, 79), (1, 10, 84), (0, 12, 88),
+    // Two weeks of mock history: rising volume, a mid-week form dip,
+    // bench sessions interleaved with squats.
+    let profile: [(daysAgo: Int, reps: Int, score: Int, activity: ActivityType)] = [
+        (13, 5, 62, .squat), (12, 8, 70, .benchPress), (11, 6, 68, .squat),
+        (9, 8, 74, .squat), (8, 10, 77, .benchPress), (7, 6, 58, .squat),
+        (5, 8, 71, .squat), (4, 12, 82, .benchPress), (3, 10, 79, .squat),
+        (1, 10, 84, .squat), (0, 12, 88, .benchPress),
     ]
     let sessions = profile.compactMap { day -> WorkoutSession? in
         let rep = RepMetrics(
@@ -311,7 +327,8 @@ private func zip<A, B>(_ a: A?, _ b: B?) -> (A, B)? {
         let analysis = SquatAnalysis(
             reps: Array(repeating: rep, count: day.reps),
             findings: [], score: day.score, usedDepth: true, bodyHeight: 1.80,
-            series: JointSeries(frames: [], bodyHeight: 1.80, usedDepth: true)
+            series: JointSeries(frames: [], bodyHeight: 1.80, usedDepth: true),
+            activity: day.activity
         )
         let recording = RecordingResult(
             videoURL: URL(fileURLWithPath: "/mock/\(day.daysAgo).mov"),

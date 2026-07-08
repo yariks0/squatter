@@ -11,9 +11,11 @@ final class AnalysisViewModel {
 
     private(set) var phase: Phase = .processing(0)
     let recording: RecordingResult
+    let activity: ActivityType
 
-    init(recording: RecordingResult) {
+    init(recording: RecordingResult, activity: ActivityType = .squat) {
         self.recording = recording
+        self.activity = activity
     }
 
     /// Runs once; calls `onFinished` exactly once on success.
@@ -30,7 +32,7 @@ final class AnalysisViewModel {
                     }
                 }
             )
-            let analysis = SquatAnalyzer.analyze(series)
+            let analysis = SquatAnalyzer.analyze(series, activity: activity)
             phase = .done(analysis)
             onFinished(analysis)
         } catch {
@@ -44,8 +46,12 @@ struct AnalysisView: View {
     @State private var model: AnalysisViewModel
     let onFinished: (SquatAnalysis) -> Void
 
-    init(recording: RecordingResult, onFinished: @escaping (SquatAnalysis) -> Void) {
-        _model = State(initialValue: AnalysisViewModel(recording: recording))
+    init(
+        recording: RecordingResult,
+        activity: ActivityType = .squat,
+        onFinished: @escaping (SquatAnalysis) -> Void
+    ) {
+        _model = State(initialValue: AnalysisViewModel(recording: recording, activity: activity))
         self.onFinished = onFinished
     }
 

@@ -11,7 +11,70 @@ enum CoachPrompt {
         var jpegData: Data
     }
 
-    static func systemPrompt() -> String {
+    static func systemPrompt(activity: ActivityType = .squat) -> String {
+        switch activity {
+        case .squat: squatSystemPrompt()
+        case .benchPress: benchSystemPrompt()
+        }
+    }
+
+    private static func benchSystemPrompt() -> String {
+        """
+        You are a national-team-level barbell coach. You judge the bench \
+        press against strength-coaching consensus standards:
+
+        - Full range: the bar touches the lower chest on every rep with the \
+        forearms vertical. In this app's convention an average elbow angle at \
+        the touch of \(Int(AnalysisTuning.benchFullTouchElbowDegrees))° or \
+        less counts as a chest touch; above \
+        \(Int(AnalysisTuning.benchShallowElbowDegrees))° the rep was cut high.
+        - Elbow tuck: upper arms roughly 45–70° from the torso at the touch. \
+        The flare metric is 0° = arm pinned to the side, 90° = a T position; \
+        \(Int(AnalysisTuning.benchFlareWarningDegrees))° warns and \
+        \(Int(AnalysisTuning.benchFlareRiskDegrees))° is a shoulder-\
+        impingement risk.
+        - Touch, don't bounce: touch-and-go is fine off a controlled descent, \
+        but a bottom dwell under \(AnalysisTuning.benchBouncePauseSeconds) s \
+        combined with a chest touch is a bounce.
+        - Bar path: a J-curve — touch at the lower chest, lock out stacked \
+        over the shoulders. The drift metric is head-ward wrist travel from \
+        touch to lockout in shoulder widths: negative means pressing toward \
+        the feet (fault); above \(AnalysisTuning.benchBarPathWarningRatio) is \
+        an exaggerated sweep.
+        - Consistent touch point: per-rep touch offsets spread over more than \
+        \(AnalysisTuning.benchTouchSpreadWarningRatio) shoulder widths means \
+        the groove is wandering.
+        - Full lockout every rep: an average top-of-rep elbow angle under \
+        \(Int(AnalysisTuning.benchLockoutElbowDegrees))° means the press \
+        stopped short.
+        - The descent is controlled (~1–2 s); under \
+        \(AnalysisTuning.minimumEccentricSeconds) s is a drop. An ascent \
+        slower than \(AnalysisTuning.slowConcentricSeconds) s is a grind — \
+        normal for heavy strength work, a load-management flag for technique \
+        sets.
+
+        How the data was measured: joint positions come from Apple Vision's \
+        3D body pose at 15 fps (LiDAR depth when the capture notes say so), \
+        smoothed before metrics. The lifter lies on a bench, so the press \
+        axis is world-up and the bar height signal is the wrist midpoint \
+        above the shoulder midpoint. Trust the numbers for touch depth, \
+        flare, tempo, and lockout. The camera sits about 3 m away at bench \
+        height, ~45° from the foot of the bench, so far-side joints may be \
+        partly occluded and plates can hide a wrist. Use the images for what \
+        the skeleton cannot see: grip width, wrist stacking, arch and leg \
+        drive, scapular position, bar speed character, and overall composure.
+
+        Grounding rules: every claim must name the rep(s) it applies to and \
+        be supported by either a metric or something visible in a labeled \
+        image. Do not restate the rules-engine findings you are given unless \
+        you add new information; never contradict a metric based on an image. \
+        Mark confidence "low" when the evidence is a partly occluded image. \
+        Write for the lifter: short, direct, one cue at a time, no jargon \
+        without explanation.
+        """
+    }
+
+    private static func squatSystemPrompt() -> String {
         """
         You are a national-team-level barbell coach. You judge back squats \
         strictly against Chinese weightlifting team (high-bar) practice:
@@ -97,7 +160,7 @@ enum CoachPrompt {
 
     private static func setContext(_ analysis: SquatAnalysis) -> String {
         var lines: [String] = []
-        lines.append("Set: \(analysis.reps.count) reps, score \(analysis.score)/100.")
+        lines.append("Set: \(analysis.kind.displayName), \(analysis.reps.count) reps, score \(analysis.score)/100.")
         lines.append(analysis.usedDepth
             ? "Capture: LiDAR depth fused with video (metric-scale skeleton)."
             : "Capture: video only (skeleton scale estimated).")
@@ -105,24 +168,48 @@ enum CoachPrompt {
             lines.append(String(format: "Estimated body height: %.2f m.", height))
         }
         lines.append("")
-        lines.append("Per-rep metrics (femur angle positive = hip below knee):")
-        for rep in analysis.reps {
-            var line = String(
-                format: "Rep %d: femur %+.0f°, torso lean %.0f°, valgus %.2f×hip width, down %.1f s, up %.1f s, L/R knee diff %.0f°",
-                rep.repNumber, rep.hipBelowKneeDegrees, rep.torsoLeanDegrees,
-                rep.kneeValgusRatio, rep.eccentricSeconds, rep.concentricSeconds,
-                rep.asymmetryDegrees
-            )
-            if let stance = rep.stanceWidthRatio {
-                line += String(format: ", stance %.2f×shoulder width", stance)
+        switch analysis.kind {
+        case .squat:
+            lines.append("Per-rep metrics (femur angle positive = hip below knee):")
+            for rep in analysis.reps {
+                var line = String(
+                    format: "Rep %d: femur %+.0f°, torso lean %.0f°, valgus %.2f×hip width, down %.1f s, up %.1f s, L/R knee diff %.0f°",
+                    rep.repNumber, rep.hipBelowKneeDegrees, rep.torsoLeanDegrees,
+                    rep.kneeValgusRatio, rep.eccentricSeconds, rep.concentricSeconds,
+                    rep.asymmetryDegrees
+                )
+                if let stance = rep.stanceWidthRatio {
+                    line += String(format: ", stance %.2f×shoulder width", stance)
+                }
+                if let shift = rep.bottomHipShiftRatio {
+                    line += String(format: ", bottom pelvis drift %.2f×hip width", shift)
+                }
+                if let lockout = rep.lockoutKneeDegrees {
+                    line += String(format: ", top knee %.0f°", lockout)
+                }
+                lines.append(line)
             }
-            if let shift = rep.bottomHipShiftRatio {
-                line += String(format: ", bottom pelvis drift %.2f×hip width", shift)
+        case .benchPress:
+            lines.append("Per-rep metrics (elbow 180° = straight; flare 0° = arm at the side; drift positive = head-ward):")
+            for rep in analysis.reps {
+                var line = String(
+                    format: "Rep %d: touch elbow %.0f°, flare %.0f°, down %.1f s, up %.1f s, touch pause %.2f s, L/R elbow diff %.0f°",
+                    rep.repNumber, rep.elbowFlexionDegrees ?? 180,
+                    rep.elbowFlareDegrees ?? 0, rep.eccentricSeconds,
+                    rep.concentricSeconds, rep.touchPauseSeconds ?? 0,
+                    rep.asymmetryDegrees
+                )
+                if let lockout = rep.lockoutElbowDegrees {
+                    line += String(format: ", top elbow %.0f°", lockout)
+                }
+                if let drift = rep.barPathDriftRatio {
+                    line += String(format: ", path drift %+.2f×shoulder width", drift)
+                }
+                if let touch = rep.touchOffsetRatio {
+                    line += String(format: ", touch offset %+.2f×shoulder width", touch)
+                }
+                lines.append(line)
             }
-            if let lockout = rep.lockoutKneeDegrees {
-                line += String(format: ", top knee %.0f°", lockout)
-            }
-            lines.append(line)
         }
         lines.append("")
         lines.append("Rules-engine findings already shown to the lifter:")

@@ -22,7 +22,7 @@ struct RepTimelineView: View {
     init(analysis: SquatAnalysis, playback: PlaybackModel) {
         self.analysis = analysis
         self.playback = playback
-        let signal = RepSegmenter.hipAboveAnkleSignal(analysis.series)
+        let signal = RepSegmenter.liftSignal(analysis.series, activity: analysis.kind)
         let baseline = RepSegmenter.standingBaseline(of: signal)
         let maxDepth = baseline - (signal.min() ?? baseline)
         if baseline > 0, maxDepth > 0 {
@@ -77,12 +77,23 @@ struct RepTimelineView: View {
     }
 
     private func summary(of rep: RepMetrics) -> String {
-        let depth = rep.hipBelowKneeDegrees >= AnalysisTuning.fullDepthDegrees ? "full depth"
-            : rep.hipBelowKneeDegrees >= AnalysisTuning.parallelToleranceDegrees ? "parallel" : "high"
-        return String(
-            format: "%@ · lean %.0f° · %.1f s ↓ %.1f s ↑",
-            depth, rep.torsoLeanDegrees, rep.eccentricSeconds, rep.concentricSeconds
-        )
+        switch analysis.kind {
+        case .squat:
+            let depth = rep.hipBelowKneeDegrees >= AnalysisTuning.fullDepthDegrees ? "full depth"
+                : rep.hipBelowKneeDegrees >= AnalysisTuning.parallelToleranceDegrees ? "parallel" : "high"
+            return String(
+                format: "%@ · lean %.0f° · %.1f s ↓ %.1f s ↑",
+                depth, rep.torsoLeanDegrees, rep.eccentricSeconds, rep.concentricSeconds
+            )
+        case .benchPress:
+            let elbow = rep.elbowFlexionDegrees ?? 180
+            let touch = elbow <= AnalysisTuning.benchFullTouchElbowDegrees ? "to the chest"
+                : elbow <= AnalysisTuning.benchShallowElbowDegrees ? "near chest" : "cut high"
+            return String(
+                format: "%@ · flare %.0f° · %.1f s ↓ %.1f s ↑",
+                touch, rep.elbowFlareDegrees ?? 0, rep.eccentricSeconds, rep.concentricSeconds
+            )
+        }
     }
 
     private func timeString(_ interval: TimeInterval) -> String {

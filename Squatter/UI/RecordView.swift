@@ -23,9 +23,11 @@ final class RecordingViewModel {
     let camera = CameraService()
     private var framingChecker: FramingChecker?
     private var timerTask: Task<Void, Never>?
+    private let activity: ActivityType
     private let onFinished: (RecordingResult) -> Void
 
-    init(onFinished: @escaping (RecordingResult) -> Void) {
+    init(activity: ActivityType = .squat, onFinished: @escaping (RecordingResult) -> Void) {
+        self.activity = activity
         self.onFinished = onFinished
     }
 
@@ -34,7 +36,7 @@ final class RecordingViewModel {
             phase = .failed(CameraService.CameraError.permissionDenied.localizedDescription)
             return
         }
-        let checker = FramingChecker { [weak self] status in
+        let checker = FramingChecker(activity: activity) { [weak self] status in
             Task { @MainActor in self?.framing = status }
         }
         framingChecker = checker
@@ -106,8 +108,8 @@ struct RecordView: View {
     @State private var model: RecordingViewModel
     @Environment(\.dismiss) private var dismiss
 
-    init(onFinished: @escaping (RecordingResult) -> Void) {
-        _model = State(initialValue: RecordingViewModel(onFinished: onFinished))
+    init(activity: ActivityType = .squat, onFinished: @escaping (RecordingResult) -> Void) {
+        _model = State(initialValue: RecordingViewModel(activity: activity, onFinished: onFinished))
     }
 
     var body: some View {

@@ -32,22 +32,186 @@ struct RepMetrics: Codable, Sendable, Identifiable {
     /// Best (max) knee extension reached between this rep's top and the next
     /// descent, degrees (180 = straight). Low = never stood up fully.
     var lockoutKneeDegrees: Double?
+
+    // MARK: Bench press (optional so squat sessions and old JSON decode;
+    // squat-only fields above carry neutral values on bench reps and are
+    // never shown for them)
+    /// Average elbow flexion at the touch, degrees (180 = straight arm).
+    var elbowFlexionDegrees: Double?
+    /// Upper-arm angle from the torso line at the touch, degrees
+    /// (0 = pinned to the side, 90 = T position).
+    var elbowFlareDegrees: Double?
+    /// Dwell time with the bar at the bottom of the rep.
+    var touchPauseSeconds: Double?
+    /// Best average elbow extension reached at the top (180 = locked out).
+    var lockoutElbowDegrees: Double?
+    /// Signed head-ward wrist drift from touch to lockout / shoulder width.
+    /// Positive = correct J-curve toward the shoulders.
+    var barPathDriftRatio: Double?
+    /// Head-ward offset of the wrists from the shoulders at the touch /
+    /// shoulder width (negative = toward the feet, i.e. lower chest).
+    var touchOffsetRatio: Double?
 }
 
 enum MetricsCalculator {
-    static func metrics(for reps: [Rep], in series: JointSeries) -> [RepMetrics] {
-        let signal = RepSegmenter.hipAboveAnkleSignal(series)
+    static func metrics(
+        for reps: [Rep], in series: JointSeries, activity: ActivityType = .squat
+    ) -> [RepMetrics] {
+        let signal = RepSegmenter.liftSignal(series, activity: activity)
         let baseline = RepSegmenter.standingBaseline(of: signal)
         return reps.enumerated().map { offset, rep in
-            metrics(
-                for: rep, number: offset + 1, in: series, signal: signal,
-                standingHeight: baseline,
-                // Lockout is judged on the best extension reached before the
-                // next rep begins (or the series ends).
-                lockoutSearchEnd: offset + 1 < reps.count
-                    ? reps[offset + 1].startIndex : series.frames.count - 1
-            )
+            // Lockout is judged on the best extension reached before the
+            // next rep begins (or the series ends).
+            let lockoutSearchEnd = offset + 1 < reps.count
+                ? reps[offset + 1].startIndex : series.frames.count - 1
+            return switch activity {
+            case .squat:
+                metrics(
+                    for: rep, number: offset + 1, in: series, signal: signal,
+                    standingHeight: baseline, lockoutSearchEnd: lockoutSearchEnd
+                )
+            case .benchPress:
+                benchMetrics(
+                    for: rep, number: offset + 1, in: series, signal: signal,
+                    lockoutHeight: baseline, lockoutSearchEnd: lockoutSearchEnd
+                )
+            }
         }
+    }
+
+    // MARK: - Bench press
+
+    private static func benchMetrics(
+        for rep: Rep,
+        number: Int,
+        in series: JointSeries,
+        signal: [Double],
+        lockoutHeight: Double,
+        lockoutSearchEnd: Int
+    ) -> RepMetrics {
+        let frames = series.frames
+        let bottom = frames[rep.bottomIndex]
+
+        let elbowLeft = jointAngle(bottom, .leftShoulder, .leftElbow, .leftWrist)
+        let elbowRight = jointAngle(bottom, .rightShoulder, .rightElbow, .rightWrist)
+        let elbowAngles = [elbowLeft, elbowRight].compactMap { $0 }
+
+        let path = barPath(frames: frames, rep: rep)
+
+        return RepMetrics(
+            repNumber: number,
+            startTime: rep.startTime,
+            endTime: rep.endTime,
+            eccentricSeconds: rep.bottomTime - rep.startTime,
+            concentricSeconds: rep.endTime - rep.bottomTime,
+            depthFraction: lockoutHeight > 0
+                ? (lockoutHeight - signal[rep.bottomIndex]) / lockoutHeight : 0,
+            // Neutral values for the squat-only fields; the UI and rules
+            // never read them for bench reps.
+            kneeFlexionDegrees: 180,
+            hipBelowKneeDegrees: 0,
+            torsoLeanDegrees: 0,
+            kneeValgusRatio: 0,
+            asymmetryDegrees: (elbowLeft != nil && elbowRight != nil)
+                ? abs(elbowLeft! - elbowRight!) : 0,
+            stanceWidthRatio: nil,
+            bottomHipShiftRatio: nil,
+            lockoutKneeDegrees: nil,
+            elbowFlexionDegrees: elbowAngles.isEmpty
+                ? nil : elbowAngles.reduce(0, +) / Double(elbowAngles.count),
+            elbowFlareDegrees: elbowFlare(bottom),
+            touchPauseSeconds: touchPause(
+                rep: rep, signal: signal, lockoutHeight: lockoutHeight, frames: frames
+            ),
+            lockoutElbowDegrees: lockoutElbow(frames: frames, from: rep.endIndex, to: lockoutSearchEnd),
+            barPathDriftRatio: path?.drift,
+            touchOffsetRatio: path?.touchOffset
+        )
+    }
+
+    /// Upper-arm angle from the torso line at the touch, averaged over both
+    /// arms. The torso line points from the shoulder center toward the pelvis,
+    /// so 0° = upper arm pinned to the side, 90° = elbows flared to a T.
+    private static func elbowFlare(_ frame: JointFrame) -> Double? {
+        guard let root = frame.position(.root),
+              let shoulderCenter = frame.position(.centerShoulder) else { return nil }
+        let torso = root - shoulderCenter
+        guard simd_length(torso) > 1e-6 else { return nil }
+        var values: [Double] = []
+        for (shoulder, elbow) in [(BodyJoint.leftShoulder, BodyJoint.leftElbow),
+                                  (.rightShoulder, .rightElbow)] {
+            guard let shoulderPos = frame.position(shoulder),
+                  let elbowPos = frame.position(elbow) else { continue }
+            let upperArm = elbowPos - shoulderPos
+            let lengths = simd_length(upperArm) * simd_length(torso)
+            guard lengths > 1e-6 else { continue }
+            let cosine = max(-1, min(1, simd_dot(upperArm, torso) / lengths))
+            values.append(Double(acos(cosine)) * 180 / .pi)
+        }
+        guard !values.isEmpty else { return nil }
+        return values.reduce(0, +) / Double(values.count)
+    }
+
+    /// Dwell time within the bottom window — how long the bar stayed at the
+    /// chest. Near zero on a touch that bounces.
+    private static func touchPause(
+        rep: Rep, signal: [Double], lockoutHeight: Double, frames: [JointFrame]
+    ) -> Double {
+        let ceiling = signal[rep.bottomIndex] + lockoutHeight * AnalysisTuning.bottomWindowFraction
+        var first = rep.bottomIndex
+        while first > rep.startIndex, signal[first - 1] <= ceiling { first -= 1 }
+        var last = rep.bottomIndex
+        while last < rep.endIndex, signal[last + 1] <= ceiling { last += 1 }
+        return frames[last].time - frames[first].time
+    }
+
+    /// Best average elbow extension reached between the rep's top crossing
+    /// and the next descent — the lockout the lifter actually finished at.
+    private static func lockoutElbow(frames: [JointFrame], from: Int, to: Int) -> Double? {
+        var best: Double?
+        for index in from ... min(max(to, from), frames.count - 1) {
+            let frame = frames[index]
+            let angles = [
+                jointAngle(frame, .leftShoulder, .leftElbow, .leftWrist),
+                jointAngle(frame, .rightShoulder, .rightElbow, .rightWrist),
+            ].compactMap { $0 }
+            guard !angles.isEmpty else { continue }
+            let average = angles.reduce(0, +) / Double(angles.count)
+            best = max(best ?? -.infinity, average)
+        }
+        return best
+    }
+
+    /// Head-ward wrist travel between the touch and the top of the rep,
+    /// plus where the touch sits relative to the shoulders — both as signed
+    /// fractions of shoulder width (positive = toward the head).
+    private static func barPath(
+        frames: [JointFrame], rep: Rep
+    ) -> (drift: Double, touchOffset: Double)? {
+        func horizontalOffset(_ frame: JointFrame) -> (offset: SIMD3<Float>, headward: SIMD3<Float>, shoulderWidth: Float)? {
+            guard let root = frame.position(.root),
+                  let shoulderCenter = frame.position(.centerShoulder),
+                  let leftShoulder = frame.position(.leftShoulder),
+                  let rightShoulder = frame.position(.rightShoulder),
+                  let leftWrist = frame.position(.leftWrist),
+                  let rightWrist = frame.position(.rightWrist) else { return nil }
+            let shoulderWidth = simd_length(leftShoulder - rightShoulder)
+            guard shoulderWidth > 1e-6 else { return nil }
+            // Head-ward direction: shoulders away from pelvis, flattened to
+            // the horizontal plane (the press axis is world-up on a bench).
+            var headward = shoulderCenter - root
+            headward.y = 0
+            let headLength = simd_length(headward)
+            guard headLength > 1e-6 else { return nil }
+            var offset = (leftWrist + rightWrist) / 2 - (leftShoulder + rightShoulder) / 2
+            offset.y = 0
+            return (offset, headward / headLength, shoulderWidth)
+        }
+        guard let touch = horizontalOffset(frames[rep.bottomIndex]),
+              let top = horizontalOffset(frames[rep.endIndex]) else { return nil }
+        let touchOffset = Double(simd_dot(touch.offset, touch.headward) / touch.shoulderWidth)
+        let topOffset = Double(simd_dot(top.offset, top.headward) / top.shoulderWidth)
+        return (drift: topOffset - touchOffset, touchOffset: touchOffset)
     }
 
     private static func metrics(

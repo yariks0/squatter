@@ -13,13 +13,15 @@ struct HomeView: View {
     // races the navigation push and the destination can render before the
     // write lands ("No recording").
     private enum Route: Hashable {
-        case setup
-        case record
+        case setup(ActivityType)
+        case record(ActivityType)
         /// Post-record review: play back and optionally trim before analysis.
-        case review(RecordingResult)
-        case analyze(RecordingResult)
+        case review(RecordingResult, ActivityType)
+        case analyze(RecordingResult, ActivityType)
         case attempt(fileName: String)
     }
+
+    @State private var choosingActivity = false
 
     var body: some View {
         NavigationStack(path: $path) {
@@ -80,21 +82,22 @@ struct HomeView: View {
             }
             .navigationDestination(for: Route.self) { route in
                 switch route {
-                case .setup:
-                    SetupGuideView { path.append(Route.record) }
-                case .record:
-                    RecordView { result in
-                        path.append(Route.review(result))
+                case .setup(let activity):
+                    SetupGuideView(activity: activity) { path.append(Route.record(activity)) }
+                case .record(let activity):
+                    RecordView(activity: activity) { result in
+                        path.append(Route.review(result, activity))
                     }
-                case .review(let recording):
+                case .review(let recording, let activity):
                     AttemptReviewView(
                         videoURL: recording.videoURL,
-                        depthSidecarURL: recording.depthSidecarURL
-                    ) { result in
-                        path.append(Route.analyze(result))
+                        depthSidecarURL: recording.depthSidecarURL,
+                        initialActivity: activity
+                    ) { result, chosen in
+                        path.append(Route.analyze(result, chosen))
                     }
-                case .analyze(let recording):
-                    AnalysisView(recording: recording) { analysis in
+                case .analyze(let recording, let activity):
+                    AnalysisView(recording: recording, activity: activity) { analysis in
                         save(recording: recording, analysis: analysis)
                     }
                     .toolbar {
@@ -115,8 +118,8 @@ struct HomeView: View {
                             videoURL: videoURL,
                             depthSidecarURL: FileManager.default.fileExists(atPath: depthURL.path)
                                 ? depthURL : nil
-                        ) { result in
-                            path.append(Route.analyze(result))
+                        ) { result, chosen in
+                            path.append(Route.analyze(result, chosen))
                         }
                     } else {
                         ContentUnavailableView("Recording unavailable", systemImage: "video.slash")
@@ -143,11 +146,18 @@ struct HomeView: View {
 
     private var recordButton: some View {
         Button {
-            path.append(Route.setup)
+            choosingActivity = true
         } label: {
             Label("Record a set", systemImage: "record.circle")
         }
         .buttonStyle(KodoProminentButtonStyle())
+        .confirmationDialog("What are you lifting?", isPresented: $choosingActivity, titleVisibility: .visible) {
+            ForEach(ActivityType.allCases) { activity in
+                Button(activity.displayName) {
+                    path.append(Route.setup(activity))
+                }
+            }
+        }
     }
 
     private func save(recording: RecordingResult, analysis: SquatAnalysis) {
@@ -227,7 +237,8 @@ private struct SessionRow: View {
                 Text(session.date.formatted(date: .abbreviated, time: .shortened))
                     .font(.subheadline.bold())
                 HStack(spacing: 6) {
-                    Text("\(session.repCount) rep\(session.repCount == 1 ? "" : "s")")
+                    Text(session.activity.displayName)
+                    Text("· \(session.repCount) rep\(session.repCount == 1 ? "" : "s")")
                     if session.usedLiDAR {
                         Label("LiDAR", systemImage: "sensor.fill")
                             .labelStyle(.titleAndIcon)

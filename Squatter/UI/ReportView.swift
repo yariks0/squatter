@@ -64,7 +64,7 @@ struct ReportView: View {
                         playback.seek(to: rep.startTime)
                         playback.player.play()
                     } label: {
-                        RepCard(rep: rep)
+                        RepCard(rep: rep, activity: analysis.kind)
                     }
                     .buttonStyle(.plain)
                 }
@@ -85,27 +85,16 @@ struct ReportView: View {
 
 private struct RepCard: View {
     let rep: RepMetrics
+    var activity: ActivityType = .squat
 
     var body: some View {
         VStack(alignment: .leading, spacing: 6) {
             Text("Rep \(rep.repNumber)")
                 .font(.system(.subheadline, design: .rounded).bold())
-            metricLine(
-                "Depth",
-                rep.hipBelowKneeDegrees >= AnalysisTuning.fullDepthDegrees ? "full" :
-                    rep.hipBelowKneeDegrees >= AnalysisTuning.parallelToleranceDegrees ? "parallel" : "high",
-                good: rep.hipBelowKneeDegrees >= AnalysisTuning.parallelToleranceDegrees
-            )
-            metricLine(
-                "Lean",
-                "\(Int(rep.torsoLeanDegrees))°",
-                good: rep.torsoLeanDegrees < AnalysisTuning.torsoLeanWarningDegrees
-            )
-            metricLine(
-                "Knees",
-                rep.kneeValgusRatio < AnalysisTuning.valgusWarningRatio ? "tracking" : "caving",
-                good: rep.kneeValgusRatio < AnalysisTuning.valgusWarningRatio
-            )
+            switch activity {
+            case .squat: squatLines
+            case .benchPress: benchLines
+            }
             Text(String(format: "%.1fs ↓ %.1fs ↑", rep.eccentricSeconds, rep.concentricSeconds))
                 .font(.caption2)
                 .foregroundStyle(.secondary)
@@ -113,6 +102,51 @@ private struct RepCard: View {
         .padding(12)
         .frame(width: 132, alignment: .leading)
         .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 16))
+    }
+
+    @ViewBuilder
+    private var squatLines: some View {
+        metricLine(
+            "Depth",
+            rep.hipBelowKneeDegrees >= AnalysisTuning.fullDepthDegrees ? "full" :
+                rep.hipBelowKneeDegrees >= AnalysisTuning.parallelToleranceDegrees ? "parallel" : "high",
+            good: rep.hipBelowKneeDegrees >= AnalysisTuning.parallelToleranceDegrees
+        )
+        metricLine(
+            "Lean",
+            "\(Int(rep.torsoLeanDegrees))°",
+            good: rep.torsoLeanDegrees < AnalysisTuning.torsoLeanWarningDegrees
+        )
+        metricLine(
+            "Knees",
+            rep.kneeValgusRatio < AnalysisTuning.valgusWarningRatio ? "tracking" : "caving",
+            good: rep.kneeValgusRatio < AnalysisTuning.valgusWarningRatio
+        )
+    }
+
+    @ViewBuilder
+    private var benchLines: some View {
+        let elbow = rep.elbowFlexionDegrees ?? 180
+        metricLine(
+            "Touch",
+            elbow <= AnalysisTuning.benchFullTouchElbowDegrees ? "chest" :
+                elbow <= AnalysisTuning.benchShallowElbowDegrees ? "close" : "high",
+            good: elbow <= AnalysisTuning.benchFullTouchElbowDegrees
+        )
+        if let flare = rep.elbowFlareDegrees {
+            metricLine(
+                "Flare",
+                "\(Int(flare))°",
+                good: flare < AnalysisTuning.benchFlareWarningDegrees
+            )
+        }
+        if let lockout = rep.lockoutElbowDegrees {
+            metricLine(
+                "Lockout",
+                lockout >= AnalysisTuning.benchLockoutElbowDegrees ? "full" : "soft",
+                good: lockout >= AnalysisTuning.benchLockoutElbowDegrees
+            )
+        }
     }
 
     private func metricLine(_ label: String, _ value: String, good: Bool) -> some View {

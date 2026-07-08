@@ -71,4 +71,45 @@ enum AnalysisTuning {
 
     // MARK: Smoothing
     static let smoothingWindow = 5
+
+    // MARK: - Bench press
+    // Standards: bar touches the chest, elbows ~45–70° from the torso (not
+    // flared to a T), controlled descent, no bounce, full elbow lockout.
+    // Thresholds are first-pass values to be tuned against real recordings.
+
+    /// Fraction of lockout height the bar must descend to count as a rep.
+    /// Lockout ≈ arm length, chest ≈ zero, so a half rep is still ~0.5.
+    static let benchMinimumRepDepthFraction = 0.35
+
+    // Touch depth (average elbow flexion at the bottom, degrees;
+    // 180 = arms straight). Deeper touch = smaller elbow angle.
+    /// At or below this the bar is at/near the chest.
+    static let benchFullTouchElbowDegrees = 95.0
+    /// Above this the rep is clearly cut high (half rep).
+    static let benchShallowElbowDegrees = 115.0
+
+    // Elbow flare (upper-arm angle from the torso line at the bottom;
+    // 0° = pinned to the side, 90° = T position).
+    static let benchFlareWarningDegrees = 78.0
+    static let benchFlareRiskDegrees = 88.0
+
+    /// Below this dwell at the bottom, a chest touch is a bounce.
+    static let benchBouncePauseSeconds = 0.1
+
+    /// Average elbow extension at the top of a rep (180 = straight);
+    /// below this the press stopped short of lockout.
+    static let benchLockoutElbowDegrees = 160.0
+
+    // Bar path (head-ward wrist drift between touch and lockout, as a
+    // fraction of shoulder width). The correct path is a J-curve: touch at
+    // the lower chest, lock out over the shoulders — so moderate head-ward
+    // drift is expected. Faults are pressing straight up (or toward the
+    // feet) and an exaggerated sweep.
+    static let benchBarPathMinimumRatio = 0.0
+    static let benchBarPathWarningRatio = 0.9
+
+    /// Spread of per-rep touch points (range of touch offsets across the
+    /// set, as a fraction of shoulder width) beyond which the touch point is
+    /// inconsistent.
+    static let benchTouchSpreadWarningRatio = 0.3
 }

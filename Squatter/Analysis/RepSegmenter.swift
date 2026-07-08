@@ -10,15 +10,21 @@ struct Rep: Codable, Sendable, Equatable {
     var endTime: TimeInterval
 }
 
-/// Splits a joint series into squat reps.
+/// Splits a joint series into reps.
 ///
 /// Vision's model space is root-anchored (the pelvis is the origin of every
-/// frame), so absolute hip height is not observable. The squat signal used
-/// here is the hip's height above the ankle midpoint, which contracts as the
-/// lifter descends: standing ≈ leg length, bottom ≈ half of it.
+/// frame), so absolute positions are not observable — every signal is a
+/// distance between tracked joints that contracts as the lifter descends:
+/// squat = hip height above the ankle midpoint (standing ≈ leg length,
+/// bottom ≈ half of it); bench = wrist midpoint above the shoulder midpoint
+/// (lockout ≈ arm length, bar at the chest ≈ zero).
 enum RepSegmenter {
-    static func segment(_ series: JointSeries) -> [Rep] {
-        let signal = hipAboveAnkleSignal(series)
+    static func segment(_ series: JointSeries, activity: ActivityType = .squat) -> [Rep] {
+        let signal = liftSignal(series, activity: activity)
+        let minimumDepthFraction = switch activity {
+        case .squat: AnalysisTuning.minimumRepDepthFraction
+        case .benchPress: AnalysisTuning.benchMinimumRepDepthFraction
+        }
         guard signal.count > 4 else { return [] }
 
         let baseline = standingBaseline(of: signal)
@@ -58,7 +64,7 @@ enum RepSegmenter {
 
             let depth = baseline - signal[bottom]
             let duration = frames[end].time - frames[start].time
-            if depth >= baseline * AnalysisTuning.minimumRepDepthFraction,
+            if depth >= baseline * minimumDepthFraction,
                duration >= AnalysisTuning.minimumRepDuration {
                 reps.append(Rep(
                     startIndex: start,
@@ -81,6 +87,36 @@ enum RepSegmenter {
         guard !signal.isEmpty else { return 0 }
         let sorted = signal.sorted()
         return sorted[min(signal.count - 1, Int(Double(signal.count) * 0.9))]
+    }
+
+    /// The contracting rep signal for an activity.
+    static func liftSignal(_ series: JointSeries, activity: ActivityType) -> [Double] {
+        switch activity {
+        case .squat: hipAboveAnkleSignal(series)
+        case .benchPress: wristAboveShoulderSignal(series)
+        }
+    }
+
+    /// Wrist midpoint height above the shoulder midpoint per frame — the bar
+    /// height signal for a lifter lying on a bench (press axis is world-up).
+    /// Falls back to the previous value when wrists are not tracked.
+    static func wristAboveShoulderSignal(_ series: JointSeries) -> [Double] {
+        var signal: [Double] = []
+        signal.reserveCapacity(series.frames.count)
+        var last = 0.0
+        for frame in series.frames {
+            let wrists = [frame.position(.leftWrist), frame.position(.rightWrist)]
+                .compactMap { $0 }
+            let shoulders = [frame.position(.leftShoulder), frame.position(.rightShoulder)]
+                .compactMap { $0 }
+            if !wrists.isEmpty, !shoulders.isEmpty {
+                let wristMid = wrists.reduce(SIMD3<Float>.zero, +) / Float(wrists.count)
+                let shoulderMid = shoulders.reduce(SIMD3<Float>.zero, +) / Float(shoulders.count)
+                last = Double(wristMid.y - shoulderMid.y)
+            }
+            signal.append(last)
+        }
+        return signal
     }
 
     /// Hip height above the ankle midpoint per frame; falls back to the

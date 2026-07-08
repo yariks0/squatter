@@ -37,7 +37,7 @@ enum CoachClient {
             "model": model,
             "max_tokens": 16000,
             "thinking": ["type": "adaptive"],
-            "system": CoachPrompt.systemPrompt(),
+            "system": CoachPrompt.systemPrompt(activity: analysis.kind),
             "messages": [[
                 "role": "user",
                 "content": CoachPrompt.userContent(analysis: analysis, keyframes: keyframes),

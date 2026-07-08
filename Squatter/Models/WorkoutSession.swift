@@ -13,6 +13,10 @@ final class WorkoutSession {
     var repCount: Int
     var usedLiDAR: Bool
     var analysisData: Data
+    /// Raw ActivityType; defaulted so pre-bench sessions migrate as squats.
+    var activityRaw: String = ActivityType.squat.rawValue
+
+    var activity: ActivityType { ActivityType(rawValue: activityRaw) ?? .squat }
 
     init(date: Date, recording: RecordingResult, analysis: SquatAnalysis) throws {
         self.date = date
@@ -22,6 +26,7 @@ final class WorkoutSession {
         self.repCount = analysis.reps.count
         self.usedLiDAR = analysis.usedDepth
         self.analysisData = try JSONEncoder().encode(analysis)
+        self.activityRaw = analysis.kind.rawValue
     }
 
     var videoURL: URL? {

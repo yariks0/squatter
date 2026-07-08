@@ -1,41 +1,21 @@
 import SwiftUI
 
 struct SetupGuideView: View {
+    var activity: ActivityType = .squat
     let onContinue: () -> Void
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
-                Image(systemName: "figure.strengthtraining.functional")
+                Image(systemName: activity.systemImage)
                     .font(.system(size: 56))
                     .frame(maxWidth: .infinity)
                     .foregroundStyle(.tint)
 
-                step(
-                    icon: "iphone.gen3",
-                    title: "Prop up your phone",
-                    text: "About 3 meters away, roughly knee-to-hip height, propped steady in portrait. That distance keeps your whole body in frame and stays within LiDAR range."
-                )
-                step(
-                    icon: "angle",
-                    title: "Stand at a 45° angle",
-                    text: "Face halfway between head-on and side-on. This one angle shows both squat depth and knee tracking — straight-on hides depth, a pure side view hides knees caving."
-                )
-                step(
-                    icon: "person.crop.rectangle",
-                    title: "Whole body in frame",
-                    text: "Head to feet visible for the entire set, including the deepest point. The indicator on the next screen turns green when framing is right."
-                )
-                step(
-                    icon: "timer",
-                    title: "5-second countdown",
-                    text: "Start the countdown, get set, squat. Tap finish when you rack — or walk to the phone; extra seconds don't hurt the analysis."
-                )
-                step(
-                    icon: "lightbulb.max",
-                    title: "Good light helps",
-                    text: "Even lighting and contrast between you and the background improve tracking. Avoid strong backlight."
-                )
+                switch activity {
+                case .squat: squatSteps
+                case .benchPress: benchSteps
+                }
 
                 Button(action: onContinue) {
                     Label("Open camera", systemImage: "arrow.right")
@@ -47,6 +27,64 @@ struct SetupGuideView: View {
         }
         .navigationTitle("Set up your shot")
         .navigationBarTitleDisplayMode(.inline)
+    }
+
+    @ViewBuilder
+    private var squatSteps: some View {
+        step(
+            icon: "iphone.gen3",
+            title: "Prop up your phone",
+            text: "About 3 meters away, roughly knee-to-hip height, propped steady in portrait. That distance keeps your whole body in frame and stays within LiDAR range."
+        )
+        step(
+            icon: "angle",
+            title: "Stand at a 45° angle",
+            text: "Face halfway between head-on and side-on. This one angle shows both squat depth and knee tracking — straight-on hides depth, a pure side view hides knees caving."
+        )
+        step(
+            icon: "person.crop.rectangle",
+            title: "Whole body in frame",
+            text: "Head to feet visible for the entire set, including the deepest point. The indicator on the next screen turns green when framing is right."
+        )
+        step(
+            icon: "timer",
+            title: "5-second countdown",
+            text: "Start the countdown, get set, squat. Tap finish when you rack — or walk to the phone; extra seconds don't hurt the analysis."
+        )
+        step(
+            icon: "lightbulb.max",
+            title: "Good light helps",
+            text: "Even lighting and contrast between you and the background improve tracking. Avoid strong backlight."
+        )
+    }
+
+    @ViewBuilder
+    private var benchSteps: some View {
+        step(
+            icon: "iphone.gen3",
+            title: "Prop up your phone",
+            text: "About 3 meters away at bench height, propped steady in portrait. That distance keeps you, the bench, and the bar in frame and stays within LiDAR range."
+        )
+        step(
+            icon: "angle",
+            title: "45° from the foot of the bench",
+            text: "Halfway between side-on and foot-on, level with the bench. This one angle shows bar path, touch point, and elbow tuck — a pure side view hides one arm behind the other."
+        )
+        step(
+            icon: "person.crop.rectangle",
+            title: "Whole body and bar in frame",
+            text: "Head to feet visible for the entire set, including the bar at lockout. The indicator on the next screen turns green when framing is right."
+        )
+        step(
+            icon: "timer",
+            title: "5-second countdown",
+            text: "Start the countdown, lie back, unrack, press. Tap finish when you rack — or walk to the phone; extra seconds don't hurt the analysis."
+        )
+        step(
+            icon: "lightbulb.max",
+            title: "Good light helps",
+            text: "Even lighting and contrast between you and the background improve tracking. Avoid strong backlight, and make sure the plates don't hide your arms from the camera."
+        )
     }
 
     private func step(icon: String, title: String, text: String) -> some View {

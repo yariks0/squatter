@@ -8,20 +8,27 @@ import SwiftUI
 struct AttemptReviewView: View {
     let videoURL: URL
     let depthSidecarURL: URL?
-    let onAnalyze: (RecordingResult) -> Void
+    let onAnalyze: (RecordingResult, ActivityType) -> Void
 
     @State private var player: AVPlayer
     @State private var duration: TimeInterval = 0
     @State private var trimStart: TimeInterval = 0
     @State private var trimEnd: TimeInterval = 0
+    @State private var activity: ActivityType
 
     /// Shortest analyzable window — roughly one slow rep.
     private static let minimumWindow: TimeInterval = 2
 
-    init(videoURL: URL, depthSidecarURL: URL?, onAnalyze: @escaping (RecordingResult) -> Void) {
+    init(
+        videoURL: URL,
+        depthSidecarURL: URL?,
+        initialActivity: ActivityType = .squat,
+        onAnalyze: @escaping (RecordingResult, ActivityType) -> Void
+    ) {
         self.videoURL = videoURL
         self.depthSidecarURL = depthSidecarURL
         self.onAnalyze = onAnalyze
+        _activity = State(initialValue: initialActivity)
         _player = State(initialValue: AVPlayer(url: videoURL))
     }
 
@@ -48,6 +55,13 @@ struct AttemptReviewView: View {
             .font(.caption)
             .foregroundStyle(.secondary)
 
+            Picker("Lift", selection: $activity) {
+                ForEach(ActivityType.allCases) { type in
+                    Text(type.displayName).tag(type)
+                }
+            }
+            .pickerStyle(.segmented)
+
             Button {
                 onAnalyze(RecordingResult(
                     videoURL: videoURL,
@@ -55,7 +69,7 @@ struct AttemptReviewView: View {
                     duration: duration,
                     usedLiDAR: depthSidecarURL != nil,
                     analysisRange: selectedRange
-                ))
+                ), activity)
             } label: {
                 Label(analyzeTitle, systemImage: "waveform.path.ecg")
             }

@@ -26,7 +26,14 @@ struct Finding: Codable, Sendable, Identifiable {
 /// Deterministic mapping from per-rep metrics to coaching findings.
 /// Thresholds live in `AnalysisTuning`.
 enum FormRules {
-    static func findings(for reps: [RepMetrics]) -> [Finding] {
+    static func findings(for reps: [RepMetrics], activity: ActivityType = .squat) -> [Finding] {
+        switch activity {
+        case .squat: squatFindings(for: reps)
+        case .benchPress: benchFindings(for: reps)
+        }
+    }
+
+    private static func squatFindings(for reps: [RepMetrics]) -> [Finding] {
         guard !reps.isEmpty else {
             return [Finding(
                 severity: .info,
@@ -46,6 +53,177 @@ enum FormRules {
         findings.append(contentsOf: lockoutFindings(reps))
         findings.append(contentsOf: fatigueFindings(reps))
         return findings.sorted { $0.severity > $1.severity }
+    }
+
+    /// Bench standards: bar touches the lower chest with the elbows tucked
+    /// ~45–75° from the torso and the forearms vertical, controlled descent
+    /// with no bounce, a J-curve press back over the shoulders, and full
+    /// elbow lockout on every rep.
+    private static func benchFindings(for reps: [RepMetrics]) -> [Finding] {
+        guard !reps.isEmpty else {
+            return [Finding(
+                severity: .info,
+                title: "No reps detected",
+                detail: "Make sure your whole body and the bar stay in frame for the full set — phone about 3 m away at bench height, at a 45° angle from the foot of the bench.",
+                repNumbers: []
+            )]
+        }
+        var findings: [Finding] = []
+        findings.append(contentsOf: benchTouchFindings(reps))
+        findings.append(contentsOf: benchFlareFindings(reps))
+        findings.append(contentsOf: benchBounceFindings(reps))
+        findings.append(contentsOf: benchLockoutFindings(reps))
+        findings.append(contentsOf: benchBarPathFindings(reps))
+        findings.append(contentsOf: benchTouchConsistencyFindings(reps))
+        findings.append(contentsOf: tempoFindings(reps))
+        findings.append(contentsOf: benchAsymmetryFindings(reps))
+        findings.append(contentsOf: fatigueFindings(reps))
+        return findings.sorted { $0.severity > $1.severity }
+    }
+
+    private static func benchTouchFindings(_ reps: [RepMetrics]) -> [Finding] {
+        let high = reps.filter {
+            ($0.elbowFlexionDegrees ?? 0) > AnalysisTuning.benchShallowElbowDegrees
+        }
+        let close = reps.filter {
+            let elbow = $0.elbowFlexionDegrees ?? 0
+            return elbow > AnalysisTuning.benchFullTouchElbowDegrees
+                && elbow <= AnalysisTuning.benchShallowElbowDegrees
+        }
+        var findings: [Finding] = []
+        if high.isEmpty, close.isEmpty {
+            findings.append(Finding(
+                severity: .info,
+                title: "Full range of motion",
+                detail: "The bar came all the way down to the chest on every rep. Keep touching the same lower-chest spot.",
+                repNumbers: []
+            ))
+        }
+        if !close.isEmpty {
+            findings.append(Finding(
+                severity: .info,
+                title: "Almost to the chest",
+                detail: "The bar stopped just short of the chest on \(repList(close)). Touch the lower chest lightly on every rep — a consistent touch point makes the press repeatable.",
+                repNumbers: close.map(\.repNumber)
+            ))
+        }
+        if !high.isEmpty {
+            findings.append(Finding(
+                severity: high.count > reps.count / 2 ? .warning : .info,
+                title: "Cutting the rep high",
+                detail: "The bar turned around well above the chest on \(repList(high)). Lower until the bar touches the lower chest with the forearms vertical; if that position hurts, reduce the load, not the range.",
+                repNumbers: high.map(\.repNumber)
+            ))
+        }
+        return findings
+    }
+
+    private static func benchFlareFindings(_ reps: [RepMetrics]) -> [Finding] {
+        let risky = reps.filter {
+            ($0.elbowFlareDegrees ?? 0) >= AnalysisTuning.benchFlareRiskDegrees
+        }
+        let flaring = reps.filter {
+            let flare = $0.elbowFlareDegrees ?? 0
+            return flare >= AnalysisTuning.benchFlareWarningDegrees
+                && flare < AnalysisTuning.benchFlareRiskDegrees
+        }
+        var findings: [Finding] = []
+        if !risky.isEmpty {
+            findings.append(Finding(
+                severity: .risk,
+                title: "Elbows flared to a T",
+                detail: "Upper arms near 90° from the torso at the touch on \(repList(risky)) — the classic shoulder-impingement position. Tuck the elbows to roughly 45–70° and touch lower on the chest.",
+                repNumbers: risky.map(\.repNumber)
+            ))
+        }
+        if !flaring.isEmpty {
+            findings.append(Finding(
+                severity: .warning,
+                title: "Elbows drifting wide",
+                detail: "Elbow flare creeping up on \(repList(flaring)). Keep the upper arms about 45–70° from the torso at the touch — think “bend the bar” or “tuck to the lats” on the way down.",
+                repNumbers: flaring.map(\.repNumber)
+            ))
+        }
+        return findings
+    }
+
+    private static func benchBounceFindings(_ reps: [RepMetrics]) -> [Finding] {
+        // A bounce needs a chest touch: cut-high reps can't bounce.
+        let bounced = reps.filter {
+            ($0.touchPauseSeconds ?? 1) < AnalysisTuning.benchBouncePauseSeconds
+                && ($0.elbowFlexionDegrees ?? 180) <= AnalysisTuning.benchFullTouchElbowDegrees
+        }
+        guard bounced.count > reps.count / 3 else { return [] }
+        return [Finding(
+            severity: .warning,
+            title: "Bouncing off the chest",
+            detail: "The bar rebounded straight off the chest on \(repList(bounced)). Touch-and-go is fine, but the touch should be a light tap off a controlled descent — sinking the bar and bouncing hides strength and beats up the ribcage.",
+            repNumbers: bounced.map(\.repNumber)
+        )]
+    }
+
+    private static func benchLockoutFindings(_ reps: [RepMetrics]) -> [Finding] {
+        let cut = reps.filter {
+            ($0.lockoutElbowDegrees ?? 180) < AnalysisTuning.benchLockoutElbowDegrees
+        }
+        guard !cut.isEmpty else { return [] }
+        return [Finding(
+            severity: .warning,
+            title: "Not locking out",
+            detail: "The elbows never reached full extension on \(repList(cut)). Finish every rep with the arms straight and the bar stacked over the shoulders before descending again.",
+            repNumbers: cut.map(\.repNumber)
+        )]
+    }
+
+    private static func benchBarPathFindings(_ reps: [RepMetrics]) -> [Finding] {
+        let backward = reps.filter {
+            ($0.barPathDriftRatio ?? 0.3) < AnalysisTuning.benchBarPathMinimumRatio
+        }
+        let sweeping = reps.filter {
+            ($0.barPathDriftRatio ?? 0.3) > AnalysisTuning.benchBarPathWarningRatio
+        }
+        var findings: [Finding] = []
+        if !backward.isEmpty {
+            findings.append(Finding(
+                severity: .warning,
+                title: "Pressing toward the feet",
+                detail: "The bar moved toward the belly instead of back over the shoulders on \(repList(backward)). Press up and slightly back — lockout belongs stacked over the shoulder joint.",
+                repNumbers: backward.map(\.repNumber)
+            ))
+        }
+        if !sweeping.isEmpty {
+            findings.append(Finding(
+                severity: .warning,
+                title: "Bar path sweeping long",
+                detail: "A very long horizontal sweep on \(repList(sweeping)). Some travel back over the shoulders is correct, but a big sweep wastes force — touch the lower chest and drive the bar up with only a slight backward drift.",
+                repNumbers: sweeping.map(\.repNumber)
+            ))
+        }
+        return findings
+    }
+
+    private static func benchTouchConsistencyFindings(_ reps: [RepMetrics]) -> [Finding] {
+        let offsets = reps.compactMap(\.touchOffsetRatio)
+        guard reps.count >= 3, offsets.count >= 3,
+              let low = offsets.min(), let high = offsets.max(),
+              high - low > AnalysisTuning.benchTouchSpreadWarningRatio else { return [] }
+        return [Finding(
+            severity: .warning,
+            title: "Touch point wandering",
+            detail: "The bar touched noticeably different spots across the set. Pick one lower-chest landmark and hit it on every rep — a consistent touch point is what makes the groove repeatable.",
+            repNumbers: []
+        )]
+    }
+
+    private static func benchAsymmetryFindings(_ reps: [RepMetrics]) -> [Finding] {
+        let uneven = reps.filter { $0.asymmetryDegrees >= AnalysisTuning.asymmetryWarningDegrees }
+        guard uneven.count > reps.count / 3 else { return [] }
+        return [Finding(
+            severity: .warning,
+            title: "Uneven press",
+            detail: "One arm bent noticeably more than the other on \(repList(uneven)) — usually one side lagging or a crooked grip. Check your grip width against the bar rings and film head-on occasionally.",
+            repNumbers: uneven.map(\.repNumber)
+        )]
     }
 
     /// 0–100 set score: start from 100, subtract per finding severity.
@@ -162,7 +340,7 @@ enum FormRules {
             findings.append(Finding(
                 severity: .info,
                 title: "Grinding ascent",
-                detail: "Slow stand-up on \(repList(grinding)). Heavy strength work can grind, but if you're training technique, keep reps crisp out of the bottom — when every rep slows to a grind, the load is too heavy for that.",
+                detail: "Slow ascent on \(repList(grinding)). Heavy strength work can grind, but if you're training technique, keep reps crisp out of the bottom — when every rep slows to a grind, the load is too heavy for that.",
                 repNumbers: grinding.map(\.repNumber)
             ))
         }

@@ -39,11 +39,8 @@ struct SetupGuideView: View {
 
                 Button(action: onContinue) {
                     Label("Open camera", systemImage: "arrow.right")
-                        .font(.system(.title3, design: .rounded).bold())
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 6)
                 }
-                .prominentActionStyle()
+                .buttonStyle(KodoProminentButtonStyle(fullWidth: true))
                 .padding(.top, 8)
             }
             .padding()

@@ -58,11 +58,8 @@ struct AttemptReviewView: View {
                 ))
             } label: {
                 Label(analyzeTitle, systemImage: "waveform.path.ecg")
-                    .font(.system(.title3, design: .rounded).bold())
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 6)
             }
-            .prominentActionStyle()
+            .buttonStyle(KodoProminentButtonStyle(fullWidth: true))
         }
         .padding()
         .navigationTitle("Recorded set")

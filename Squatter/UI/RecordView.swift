@@ -142,12 +142,8 @@ struct RecordView: View {
                     model.beginCountdown()
                 } label: {
                     Label("Start set", systemImage: "record.circle")
-                        .font(.system(.title2, design: .rounded).bold())
-                        .padding(.horizontal, 24)
-                        .padding(.vertical, 12)
                 }
-                .prominentActionStyle()
-                .tint(.red)
+                .buttonStyle(KodoProminentButtonStyle())
                 .padding(.bottom, 40)
             case .countdown(let tick):
                 Text("\(tick)")
@@ -165,12 +161,8 @@ struct RecordView: View {
                         Task { await model.stopAndFinish() }
                     } label: {
                         Label("Finish set", systemImage: "stop.circle.fill")
-                            .font(.system(.title2, design: .rounded).bold())
-                            .padding(.horizontal, 24)
-                            .padding(.vertical, 12)
                     }
-                    .prominentActionStyle()
-                    .tint(.red)
+                    .buttonStyle(KodoProminentButtonStyle())
                 }
                 .padding(.bottom, 40)
             case .finishing:

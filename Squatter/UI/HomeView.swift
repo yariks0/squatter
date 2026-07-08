@@ -36,6 +36,13 @@ struct HomeView: View {
                     }
                 } else {
                     List {
+                        if !sessions.isEmpty {
+                            Section {
+                                ProgressDashboard(sessions: sessions)
+                            } header: {
+                                Text("Progress")
+                            }
+                        }
                         if !unanalyzed.isEmpty {
                             Section("Recorded — not analyzed") {
                                 ForEach(unanalyzed, id: \.self) { url in
@@ -64,7 +71,13 @@ struct HomeView: View {
                 }
             }
             .onAppear(perform: refreshUnanalyzed)
-            .navigationTitle("Squatter")
+            .navigationTitle("")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .topBarLeading) {
+                    KodoEmblem(size: 36)
+                }
+            }
             .navigationDestination(for: Route.self) { route in
                 switch route {
                 case .setup:
@@ -83,6 +96,15 @@ struct HomeView: View {
                 case .analyze(let recording):
                     AnalysisView(recording: recording) { analysis in
                         save(recording: recording, analysis: analysis)
+                    }
+                    .toolbar {
+                        ToolbarItem(placement: .topBarTrailing) {
+                            Button {
+                                path = NavigationPath()
+                            } label: {
+                                Label("Home", systemImage: "house.fill")
+                            }
+                        }
                     }
                 case .attempt(let fileName):
                     if let directory = try? FileLocations.recordingsDirectory() {
@@ -124,12 +146,8 @@ struct HomeView: View {
             path.append(Route.setup)
         } label: {
             Label("Record a set", systemImage: "record.circle")
-                .font(.system(.title3, design: .rounded).bold())
-                .padding(.horizontal, 20)
-                .padding(.vertical, 10)
         }
-        .prominentActionStyle()
-        .tint(.red)
+        .buttonStyle(KodoProminentButtonStyle())
     }
 
     private func save(recording: RecordingResult, analysis: SquatAnalysis) {

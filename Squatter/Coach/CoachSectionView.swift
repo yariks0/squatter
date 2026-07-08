@@ -50,11 +50,8 @@ struct CoachSectionView: View {
                 run()
             } label: {
                 Label("Get AI coaching", systemImage: "sparkles")
-                    .font(.system(.body, design: .rounded).bold())
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 4)
             }
-            .prominentActionStyle()
+            .buttonStyle(KodoProminentButtonStyle(fullWidth: true, compact: true))
             Text("Sends this set's metrics and a few keyframes to Claude. Needs network and your Anthropic API key.")
                 .font(.caption)
                 .foregroundStyle(.secondary)

@@ -22,9 +22,9 @@ struct SyntheticBench {
     var seed: UInt64 = 7
 
     // Arm endpoints relative to each shoulder, mirrored in x per side.
-    /// Wrist at the touch: slightly outside the shoulder, just above the
-    /// chest plane, toward the feet (lower-chest touch point).
-    var touchWristOffset = SIMD3<Float>(0.06, 0.05, 0.15)
+    /// Wrist at the touch: directly above the touch elbow (vertical
+    /// forearm), at a lower-chest touch point.
+    var touchWristOffset = SIMD3<Float>(0.225, 0.205, 0.186)
     /// Elbow at the touch: tucked ~52° from the torso line.
     var touchElbowOffset = SIMD3<Float>(0.225, -0.075, 0.186)
     var lockoutWristOffset = SIMD3<Float>(0, 0.58, 0)

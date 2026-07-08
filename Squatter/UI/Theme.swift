@@ -134,6 +134,58 @@ struct ScoreRing: View {
     private var color: Color { Kodo.grade(for: score) }
 }
 
+/// Kodo mode selector: a sculpted capsule track with a Soul Red thumb that
+/// slides between options; gauge-style uppercase labels.
+struct KodoSegmentedPicker<Option: Hashable>: View {
+    let options: [Option]
+    let label: (Option) -> String
+    @Binding var selection: Option
+    @Namespace private var thumb
+
+    var body: some View {
+        HStack(spacing: 4) {
+            ForEach(options, id: \.self) { option in
+                Button {
+                    withAnimation(.easeOut(duration: 0.2)) { selection = option }
+                } label: {
+                    Text(label(option).uppercased())
+                        .font(.caption.weight(.semibold))
+                        .tracking(1.2)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.8)
+                        .foregroundStyle(selection == option ? .white : Kodo.inkSecondary)
+                        .padding(.vertical, 9)
+                        .frame(maxWidth: .infinity)
+                        .background {
+                            if selection == option {
+                                Capsule()
+                                    .fill(
+                                        LinearGradient(
+                                            colors: [Kodo.soulRedBright, Kodo.soulRed],
+                                            startPoint: .top, endPoint: .bottom
+                                        )
+                                    )
+                                    .matchedGeometryEffect(id: "thumb", in: thumb)
+                            }
+                        }
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(4)
+        .background(
+            Capsule()
+                .fill(
+                    LinearGradient(
+                        colors: [Kodo.cardTop, Kodo.cardBottom],
+                        startPoint: .topLeading, endPoint: .bottomTrailing
+                    )
+                )
+                .overlay(Capsule().strokeBorder(Kodo.cardEdge, lineWidth: 1))
+        )
+    }
+}
+
 /// Kodo primary action: a Soul Red capsule with a machined edge highlight
 /// and a soft red bloom, compressing slightly under the finger.
 struct KodoProminentButtonStyle: ButtonStyle {

@@ -89,9 +89,19 @@ enum AnalysisTuning {
     static let benchShallowElbowDegrees = 115.0
 
     // Elbow flare (upper-arm angle from the torso line at the bottom;
-    // 0° = pinned to the side, 90° = T position).
+    // 0° = pinned to the side, 90° = T position). The safe window is an
+    // "arrow" shape around 45–70°.
     static let benchFlareWarningDegrees = 78.0
     static let benchFlareRiskDegrees = 88.0
+    /// Below this the elbows are pinned to the torso (over-tucked): the
+    /// chest stops contributing, the wrists carry a longer moment arm, and
+    /// the press path lengthens.
+    static let benchOverTuckFlareDegrees = 40.0
+
+    /// Forearm angle from vertical at the touch. Vertical forearms stack
+    /// the bar over wrist over elbow; beyond this the force leaks
+    /// horizontally — usually a grip-width or touch-point mismatch.
+    static let benchForearmTiltWarningDegrees = 20.0
 
     /// Below this dwell at the bottom, a chest touch is a bounce.
     static let benchBouncePauseSeconds = 0.1

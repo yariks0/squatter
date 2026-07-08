@@ -55,12 +55,11 @@ struct AttemptReviewView: View {
             .font(.caption)
             .foregroundStyle(.secondary)
 
-            Picker("Lift", selection: $activity) {
-                ForEach(ActivityType.allCases) { type in
-                    Text(type.displayName).tag(type)
-                }
-            }
-            .pickerStyle(.segmented)
+            KodoSegmentedPicker(
+                options: ActivityType.allCases,
+                label: \.displayName,
+                selection: $activity
+            )
 
             Button {
                 onAnalyze(RecordingResult(

@@ -71,6 +71,7 @@ enum FormRules {
         var findings: [Finding] = []
         findings.append(contentsOf: benchTouchFindings(reps))
         findings.append(contentsOf: benchFlareFindings(reps))
+        findings.append(contentsOf: benchForearmFindings(reps))
         findings.append(contentsOf: benchBounceFindings(reps))
         findings.append(contentsOf: benchLockoutFindings(reps))
         findings.append(contentsOf: benchBarPathFindings(reps))
@@ -144,7 +145,31 @@ enum FormRules {
                 repNumbers: flaring.map(\.repNumber)
             ))
         }
+        let pinned = reps.filter {
+            ($0.elbowFlareDegrees ?? 60) < AnalysisTuning.benchOverTuckFlareDegrees
+        }
+        if !pinned.isEmpty {
+            findings.append(Finding(
+                severity: pinned.count > reps.count / 2 ? .warning : .info,
+                title: "Elbows over-tucked",
+                detail: "Upper arms pinned inside ~40° of the torso on \(repList(pinned)). Over-tucking takes the chest out of the press and loads the front delts and wrists through a longer path. Let the elbows sit around 45–70° — an arrow, not a pencil.",
+                repNumbers: pinned.map(\.repNumber)
+            ))
+        }
         return findings
+    }
+
+    private static func benchForearmFindings(_ reps: [RepMetrics]) -> [Finding] {
+        let tipping = reps.filter {
+            ($0.forearmTiltDegrees ?? 0) >= AnalysisTuning.benchForearmTiltWarningDegrees
+        }
+        guard !tipping.isEmpty else { return [] }
+        return [Finding(
+            severity: .warning,
+            title: "Forearms not vertical",
+            detail: "The forearms tipped well off vertical at the touch on \(repList(tipping)) — force leaks sideways instead of driving the bar. That's usually a grip-width or touch-point mismatch: adjust hand spacing until the wrist stacks straight over the elbow when the bar meets the chest.",
+            repNumbers: tipping.map(\.repNumber)
+        )]
     }
 
     private static func benchBounceFindings(_ reps: [RepMetrics]) -> [Finding] {

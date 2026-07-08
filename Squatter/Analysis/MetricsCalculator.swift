@@ -32,6 +32,12 @@ struct RepMetrics: Codable, Sendable, Identifiable {
     /// Best (max) knee extension reached between this rep's top and the next
     /// descent, degrees (180 = straight). Low = never stood up fully.
     var lockoutKneeDegrees: Double?
+    /// Shin angle from vertical at the bottom; with torso lean it gives the
+    /// trunk–tibia balance (near-parallel = load centered).
+    var shinAngleDegrees: Double?
+    /// Horizontal bar-over-midfoot offset at the bottom (shoulder center vs
+    /// ankle midpoint), as a fraction of hip width. Coach context.
+    var balanceDriftRatio: Double?
 
     // MARK: Bench press (optional so squat sessions and old JSON decode;
     // squat-only fields above carry neutral values on bench reps and are
@@ -51,6 +57,12 @@ struct RepMetrics: Codable, Sendable, Identifiable {
     /// Head-ward offset of the wrists from the shoulders at the touch /
     /// shoulder width (negative = toward the feet, i.e. lower chest).
     var touchOffsetRatio: Double?
+    /// Average forearm angle from vertical at the touch (0 = bar stacked
+    /// over wrist over elbow).
+    var forearmTiltDegrees: Double?
+    /// Where the ascent was slowest (the sticking region), as a fraction of
+    /// the rep's travel above the touch. Coach context, not a rule.
+    var stickingHeightFraction: Double?
 }
 
 enum MetricsCalculator {
@@ -125,8 +137,51 @@ enum MetricsCalculator {
             ),
             lockoutElbowDegrees: lockoutElbow(frames: frames, from: rep.endIndex, to: lockoutSearchEnd),
             barPathDriftRatio: path?.drift,
-            touchOffsetRatio: path?.touchOffset
+            touchOffsetRatio: path?.touchOffset,
+            forearmTiltDegrees: forearmTilt(bottom),
+            stickingHeightFraction: stickingHeight(rep: rep, signal: signal, frames: frames)
         )
+    }
+
+    /// Average forearm (elbow→wrist) angle from vertical at the touch.
+    /// Vertical forearms put the bar straight over the elbow.
+    private static func forearmTilt(_ frame: JointFrame) -> Double? {
+        var values: [Double] = []
+        for (elbow, wrist) in [(BodyJoint.leftElbow, BodyJoint.leftWrist),
+                               (.rightElbow, .rightWrist)] {
+            guard let elbowPos = frame.position(elbow),
+                  let wristPos = frame.position(wrist) else { continue }
+            let forearm = wristPos - elbowPos
+            guard simd_length(forearm) > 1e-6 else { continue }
+            let horizontal = sqrt(forearm.x * forearm.x + forearm.z * forearm.z)
+            values.append(Double(atan2(horizontal, forearm.y)) * 180 / .pi)
+        }
+        guard !values.isEmpty else { return nil }
+        return values.reduce(0, +) / Double(values.count)
+    }
+
+    /// Height (fraction of the rep's travel above the touch) where the bar
+    /// moved slowest on the way up — the sticking region. The edges of the
+    /// ascent are excluded: the bar is legitimately slow leaving the chest
+    /// and approaching lockout.
+    private static func stickingHeight(
+        rep: Rep, signal: [Double], frames: [JointFrame]
+    ) -> Double? {
+        guard rep.endIndex - rep.bottomIndex >= 4 else { return nil }
+        let travel = signal[rep.endIndex] - signal[rep.bottomIndex]
+        guard travel > 1e-6 else { return nil }
+        var slowest: (velocity: Double, height: Double)?
+        for index in (rep.bottomIndex + 1) ..< rep.endIndex {
+            let height = (signal[index] - signal[rep.bottomIndex]) / travel
+            guard height > 0.15, height < 0.85 else { continue }
+            let dt = frames[index + 1].time - frames[index - 1].time
+            guard dt > 0 else { continue }
+            let velocity = (signal[index + 1] - signal[index - 1]) / dt
+            if slowest == nil || velocity < slowest!.velocity {
+                slowest = (velocity, height)
+            }
+        }
+        return slowest?.height
     }
 
     /// Upper-arm angle from the torso line at the touch, averaged over both
@@ -143,10 +198,10 @@ enum MetricsCalculator {
             guard let shoulderPos = frame.position(shoulder),
                   let elbowPos = frame.position(elbow) else { continue }
             let upperArm = elbowPos - shoulderPos
-            let lengths = simd_length(upperArm) * simd_length(torso)
-            guard lengths > 1e-6 else { continue }
-            let cosine = max(-1, min(1, simd_dot(upperArm, torso) / lengths))
-            values.append(Double(acos(cosine)) * 180 / .pi)
+            guard simd_length(upperArm) * simd_length(torso) > 1e-6 else { continue }
+            values.append(Double(
+                atan2(simd_length(simd_cross(upperArm, torso)), simd_dot(upperArm, torso))
+            ) * 180 / .pi)
         }
         guard !values.isEmpty else { return nil }
         return values.reduce(0, +) / Double(values.count)
@@ -244,7 +299,9 @@ enum MetricsCalculator {
             asymmetryDegrees: (kneeLeft != nil && kneeRight != nil) ? abs(kneeLeft! - kneeRight!) : 0,
             stanceWidthRatio: stanceWidth(frames[rep.startIndex]),
             bottomHipShiftRatio: bottomHipShift(rep: rep, signal: signal, standingHeight: standingHeight, frames: frames),
-            lockoutKneeDegrees: lockoutKnee(frames: frames, from: rep.endIndex, to: lockoutSearchEnd)
+            lockoutKneeDegrees: lockoutKnee(frames: frames, from: rep.endIndex, to: lockoutSearchEnd),
+            shinAngleDegrees: shinAngle(bottom),
+            balanceDriftRatio: balanceDrift(bottom)
         )
     }
 
@@ -316,15 +373,16 @@ enum MetricsCalculator {
         return best
     }
 
-    /// Angle at `vertex` between `a` and `b`, in degrees.
+    /// Angle at `vertex` between `a` and `b`, in degrees. Computed as
+    /// atan2(|u×v|, u·v), which stays precise near 0° and 180° where the
+    /// clamped-cosine form loses resolution — exactly the range lockout
+    /// angles live in.
     static func jointAngle(_ frame: JointFrame, _ a: BodyJoint, _ vertex: BodyJoint, _ b: BodyJoint) -> Double? {
         guard let pa = frame.position(a), let pv = frame.position(vertex), let pb = frame.position(b)
         else { return nil }
         let u = pa - pv, v = pb - pv
-        let lengths = simd_length(u) * simd_length(v)
-        guard lengths > 1e-6 else { return nil }
-        let cosine = max(-1, min(1, simd_dot(u, v) / lengths))
-        return Double(acos(cosine)) * 180 / .pi
+        guard simd_length(u) * simd_length(v) > 1e-6 else { return nil }
+        return Double(atan2(simd_length(simd_cross(u, v)), simd_dot(u, v))) * 180 / .pi
     }
 
     /// Femur angle vs horizontal, averaged over both legs. Positive when the
@@ -348,9 +406,45 @@ enum MetricsCalculator {
         guard let root = frame.position(.root), let shoulders = frame.position(.centerShoulder)
         else { return nil }
         let trunk = shoulders - root
-        let length = simd_length(trunk)
-        guard length > 1e-6 else { return nil }
-        return Double(acos(max(-1, min(1, trunk.y / length)))) * 180 / .pi
+        guard simd_length(trunk) > 1e-6 else { return nil }
+        let horizontal = sqrt(trunk.x * trunk.x + trunk.z * trunk.z)
+        return Double(atan2(horizontal, trunk.y)) * 180 / .pi
+    }
+
+    /// Shin (ankle → knee) angle from vertical at the bottom, averaged over
+    /// both legs. Together with torso lean this describes the trunk–tibia
+    /// balance: near-parallel trunk and shins keep the load centered.
+    private static func shinAngle(_ frame: JointFrame) -> Double? {
+        var values: [Double] = []
+        for (knee, ankle) in [(BodyJoint.leftKnee, BodyJoint.leftAnkle),
+                              (.rightKnee, .rightAnkle)] {
+            guard let kneePos = frame.position(knee),
+                  let anklePos = frame.position(ankle) else { continue }
+            let shin = kneePos - anklePos
+            guard simd_length(shin) > 1e-6 else { continue }
+            let horizontal = sqrt(shin.x * shin.x + shin.z * shin.z)
+            values.append(Double(atan2(horizontal, shin.y)) * 180 / .pi)
+        }
+        guard !values.isEmpty else { return nil }
+        return values.reduce(0, +) / Double(values.count)
+    }
+
+    /// Horizontal offset of the bar (shoulder center, where a high-bar
+    /// squat carries it) from the ankle midpoint at the bottom, as a
+    /// fraction of hip width. Zero = bar balanced over the midfoot;
+    /// forward drift adds a lumbar moment arm.
+    private static func balanceDrift(_ frame: JointFrame) -> Double? {
+        guard let shoulders = frame.position(.centerShoulder),
+              let leftHip = frame.position(.leftHip),
+              let rightHip = frame.position(.rightHip) else { return nil }
+        let ankles = [frame.position(.leftAnkle), frame.position(.rightAnkle)].compactMap { $0 }
+        guard !ankles.isEmpty else { return nil }
+        let hipWidth = simd_length(leftHip - rightHip)
+        guard hipWidth > 1e-6 else { return nil }
+        let ankleMid = ankles.reduce(SIMD3<Float>.zero, +) / Float(ankles.count)
+        var offset = shoulders - ankleMid
+        offset.y = 0
+        return Double(simd_length(offset) / hipWidth)
     }
 
     /// Peak medial deviation of either knee from its hip–ankle line during

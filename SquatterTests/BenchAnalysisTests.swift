@@ -65,6 +65,22 @@ struct BenchAnalysisTests {
         })
     }
 
+    @Test func flagsOverTuckedElbows() {
+        var generator = SyntheticBench(repCount: 5)
+        // Upper arms pinned along the torso (~25° from the torso line).
+        generator.touchElbowOffset = SIMD3(0.08, -0.10, 0.28)
+        let analysis = SquatAnalyzer.analyze(generator.series(), activity: .benchPress)
+        #expect(analysis.findings.contains { $0.title == "Elbows over-tucked" })
+    }
+
+    @Test func flagsTippedForearms() {
+        var generator = SyntheticBench(repCount: 5)
+        // Wrists well inside and past the elbows at the touch (~50° tilt).
+        generator.touchWristOffset = SIMD3(0.03, 0.10, 0.25)
+        let analysis = SquatAnalyzer.analyze(generator.series(), activity: .benchPress)
+        #expect(analysis.findings.contains { $0.title == "Forearms not vertical" })
+    }
+
     @Test func flagsCutHighReps() {
         var generator = SyntheticBench(repCount: 5)
         // The bar turns around well above the chest with the arms barely bent.

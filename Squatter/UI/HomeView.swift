@@ -151,12 +151,13 @@ struct HomeView: View {
             Label("Record a set", systemImage: "record.circle")
         }
         .buttonStyle(KodoProminentButtonStyle())
-        .confirmationDialog("What are you lifting?", isPresented: $choosingActivity, titleVisibility: .visible) {
-            ForEach(ActivityType.allCases) { activity in
-                Button(activity.displayName) {
-                    path.append(Route.setup(activity))
-                }
+        .sheet(isPresented: $choosingActivity) {
+            LiftChooserSheet { activity in
+                choosingActivity = false
+                path.append(Route.setup(activity))
             }
+            .presentationDetents([.height(250)])
+            .presentationDragIndicator(.visible)
         }
     }
 
@@ -192,6 +193,65 @@ struct HomeView: View {
             CoachReportStore.delete(for: videoURL)
         }
         refreshUnanalyzed()
+    }
+}
+
+/// Kodo lift chooser: one sculpted card per activity, Soul Red icon badge,
+/// gauge-style caption.
+private struct LiftChooserSheet: View {
+    let onChoose: (ActivityType) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("WHAT ARE YOU LIFTING?")
+                .font(.caption2.weight(.semibold))
+                .tracking(1.4)
+                .foregroundStyle(.secondary)
+                .padding(.top, 22)
+            ForEach(ActivityType.allCases) { activity in
+                Button {
+                    onChoose(activity)
+                } label: {
+                    HStack(spacing: 14) {
+                        Image(systemName: activity.systemImage)
+                            .font(.title3)
+                            .foregroundStyle(.white)
+                            .frame(width: 42, height: 42)
+                            .background(
+                                LinearGradient(
+                                    colors: [Kodo.soulRedBright, Kodo.soulRed],
+                                    startPoint: .top, endPoint: .bottom
+                                ),
+                                in: Circle()
+                            )
+                        Text(activity.displayName)
+                            .font(.headline)
+                            .foregroundStyle(Kodo.inkPrimary)
+                        Spacer()
+                        Image(systemName: "chevron.right")
+                            .font(.footnote.bold())
+                            .foregroundStyle(Kodo.inkSecondary)
+                    }
+                    .padding(14)
+                    .background(
+                        RoundedRectangle(cornerRadius: 18, style: .continuous)
+                            .fill(
+                                LinearGradient(
+                                    colors: [Kodo.cardTop, Kodo.cardBottom],
+                                    startPoint: .topLeading, endPoint: .bottomTrailing
+                                )
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 18, style: .continuous)
+                                    .strokeBorder(Kodo.cardEdge, lineWidth: 1)
+                            )
+                    )
+                }
+                .buttonStyle(.plain)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 20)
     }
 }
 

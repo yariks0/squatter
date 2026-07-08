@@ -11,6 +11,18 @@ import SwiftUI
 struct ProgressDashboard: View {
     let sessions: [WorkoutSession]
 
+    /// nil = both lifts combined.
+    @State private var scope: ActivityType? = nil
+
+    private var scopedSessions: [WorkoutSession] {
+        guard let scope else { return sessions }
+        return sessions.filter { $0.activity == scope }
+    }
+
+    private var visibleActivities: [ActivityType] {
+        scope.map { [$0] } ?? ActivityType.allCases
+    }
+
     /// One point per (day, lift): the reps chart stacks the two lifts,
     /// the score chart draws one line per lift.
     private struct DayStat: Identifiable {
@@ -29,7 +41,7 @@ struct ProgressDashboard: View {
     private var calendar: Calendar { .current }
 
     private var days: [DayStat] {
-        let grouped = Dictionary(grouping: sessions) { session in
+        let grouped = Dictionary(grouping: scopedSessions) { session in
             DayKey(day: calendar.startOfDay(for: session.date), activity: session.activity)
         }
         let stats = grouped.map { key, sessions in
@@ -44,12 +56,13 @@ struct ProgressDashboard: View {
     }
 
     /// Series color per lift, shared by both charts and the legend:
-    /// Soul Red carries the squat, titanium the bench.
-    private var liftColorScale: KeyValuePairs<String, Color> {
-        [
-            ActivityType.squat.displayName: Kodo.soulRedBright,
-            ActivityType.benchPress.displayName: Kodo.titanium,
-        ]
+    /// Soul Red carries the squat, titanium the bench. Built from the
+    /// visible lifts so a scoped chart doesn't advertise the hidden series.
+    private func liftColor(_ activity: ActivityType) -> Color {
+        switch activity {
+        case .squat: Kodo.soulRedBright
+        case .benchPress: Kodo.titanium
+        }
     }
 
     /// Charts share one x-domain so the bars and the trend line align. Always
@@ -65,6 +78,11 @@ struct ProgressDashboard: View {
 
     var body: some View {
         Group {
+            KodoSegmentedPicker(
+                options: [ActivityType?.none] + ActivityType.allCases.map { $0 },
+                label: { $0?.displayName ?? "All" },
+                selection: $scope
+            )
             statTiles
             repsChart
             scoreChart
@@ -80,7 +98,7 @@ struct ProgressDashboard: View {
 
     private func sessions(daysBack range: Range<Int>) -> [WorkoutSession] {
         let today = calendar.startOfDay(for: .now)
-        return sessions.filter { session in
+        return scopedSessions.filter { session in
             let age = calendar.dateComponents(
                 [.day], from: calendar.startOfDay(for: session.date), to: today
             ).day ?? .max
@@ -112,7 +130,7 @@ struct ProgressDashboard: View {
                 tileDivider
                 StatTile(
                     label: "Best score",
-                    value: sessions.map(\.score).max().map { "\($0)" } ?? "—"
+                    value: scopedSessions.map(\.score).max().map { "\($0)" } ?? "—"
                 )
             }
         }
@@ -144,8 +162,12 @@ struct ProgressDashboard: View {
                     .foregroundStyle(by: .value("Lift", stat.activity.displayName))
                     .cornerRadius(3)
                 }
-                .chartForegroundStyleScale(liftColorScale)
+                .chartForegroundStyleScale(
+                    domain: visibleActivities.map(\.displayName),
+                    range: visibleActivities.map(liftColor)
+                )
                 .chartLegend(position: .top, alignment: .trailing)
+                .chartLegend(scope == nil ? .automatic : .hidden)
                 .chartXScale(domain: xDomain)
                 .chartYAxis { kodoAxis(values: .automatic(desiredCount: 3)) }
                 .chartXAxis { kodoDayAxis }
@@ -190,8 +212,12 @@ struct ProgressDashboard: View {
                         }
                     }
                 }
-                .chartForegroundStyleScale(liftColorScale)
+                .chartForegroundStyleScale(
+                    domain: visibleActivities.map(\.displayName),
+                    range: visibleActivities.map(liftColor)
+                )
                 .chartLegend(position: .top, alignment: .trailing)
+                .chartLegend(scope == nil ? .automatic : .hidden)
                 .chartXScale(domain: xDomain)
                 .chartYScale(domain: 0 ... 100)
                 .chartYAxis { kodoAxis(values: .automatic(desiredCount: 3)) }

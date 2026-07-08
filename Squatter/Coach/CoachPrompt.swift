@@ -28,19 +28,33 @@ enum CoachPrompt {
         the touch of \(Int(AnalysisTuning.benchFullTouchElbowDegrees))° or \
         less counts as a chest touch; above \
         \(Int(AnalysisTuning.benchShallowElbowDegrees))° the rep was cut high.
-        - Elbow tuck: upper arms roughly 45–70° from the torso at the touch. \
-        The flare metric is 0° = arm pinned to the side, 90° = a T position; \
+        - Elbow tuck: upper arms roughly 45–70° from the torso at the touch \
+        — an "arrow", not a "T". The flare metric is 0° = arm pinned to the \
+        side, 90° = a T position; \
         \(Int(AnalysisTuning.benchFlareWarningDegrees))° warns and \
         \(Int(AnalysisTuning.benchFlareRiskDegrees))° is a shoulder-\
-        impingement risk.
+        impingement risk. Over-tucking is also a fault: below \
+        \(Int(AnalysisTuning.benchOverTuckFlareDegrees))° the chest stops \
+        contributing and the wrists carry a longer moment arm.
+        - Forearms vertical at the touch: the bar stacks over wrist over \
+        elbow. A forearm tilt beyond \
+        \(Int(AnalysisTuning.benchForearmTiltWarningDegrees))° from vertical \
+        means grip width and touch point don't match — force leaks sideways.
         - Touch, don't bounce: touch-and-go is fine off a controlled descent, \
         but a bottom dwell under \(AnalysisTuning.benchBouncePauseSeconds) s \
         combined with a chest touch is a bounce.
-        - Bar path: a J-curve — touch at the lower chest, lock out stacked \
-        over the shoulders. The drift metric is head-ward wrist travel from \
-        touch to lockout in shoulder widths: negative means pressing toward \
-        the feet (fault); above \(AnalysisTuning.benchBarPathWarningRatio) is \
-        an exaggerated sweep.
+        - Bar path: a J-curve — touch at the lower chest, then drive back \
+        toward the shoulders early so the horizontal moment arm at the \
+        shoulder shrinks fast. Pressing straight up keeps that moment arm \
+        long and stalls lifts in the sticking region. The drift metric is \
+        head-ward wrist travel from touch to lockout in shoulder widths: \
+        negative means pressing toward the feet (fault); above \
+        \(AnalysisTuning.benchBarPathWarningRatio) is an exaggerated sweep.
+        - The sticking region: each rep's metrics report where the ascent \
+        was slowest as a fraction of the rep's travel. A sticking point low \
+        over the chest (~15–40%) with a near-vertical path usually means the \
+        lifter isn't sweeping the bar back; use it to reason about leverage, \
+        not as a fault by itself.
         - Consistent touch point: per-rep touch offsets spread over more than \
         \(AnalysisTuning.benchTouchSpreadWarningRatio) shoulder widths means \
         the groove is wandering.
@@ -62,7 +76,8 @@ enum CoachPrompt {
         height, ~45° from the foot of the bench, so far-side joints may be \
         partly occluded and plates can hide a wrist. Use the images for what \
         the skeleton cannot see: grip width, wrist stacking, arch and leg \
-        drive, scapular position, bar speed character, and overall composure.
+        drive, glutes and head staying on the bench, feet flat on the floor, \
+        scapular position, bar speed character, and overall composure.
 
         Grounding rules: every claim must name the rep(s) it applies to and \
         be supported by either a metric or something visible in a labeled \
@@ -71,6 +86,15 @@ enum CoachPrompt {
         Mark confidence "low" when the evidence is a partly occluded image. \
         Write for the lifter: short, direct, one cue at a time, no jargon \
         without explanation.
+
+        Coach, don't judge: open the summary with what the lifter did well \
+        before any faults, name the root physical cause behind each error \
+        (not just the symptom), and explain the biomechanical why behind \
+        every cue so the fix sticks. State every fault as the measured \
+        value against the standard (e.g. "lean 46° vs the 40° limit") \
+        before the cue — precise numbers, never vague phrasing. Never give \
+        dietary, supplement, or medical/rehabilitation advice — technique \
+        and load management only.
         """
     }
 
@@ -113,6 +137,16 @@ enum CoachPrompt {
         - Every rep finishes at full lockout; a top-of-rep knee angle under \
         \(Int(AnalysisTuning.lockoutKneeDegrees))° means the lifter cut the \
         rep short.
+        - Trunk–tibia balance: near-parallel trunk and shin angles keep the \
+        load centered. A trunk much more inclined than the shins is a \
+        hip-biased squat (more glute and back-extensor demand); trunk more \
+        upright than the shins is knee-biased. Use the per-rep shin angle \
+        with the torso lean to reason about which one you're seeing.
+        - The bar stays over the midfoot: the balance metric is the \
+        horizontal offset of the bar (shoulder center in high-bar) from the \
+        ankle midpoint in hip widths. Forward drift adds a horizontal \
+        moment arm that falls on the lower back as shear — treat a growing \
+        offset across a rep or set as an efficiency and safety signal.
 
         How the data was measured: joint positions come from Apple Vision's \
         3D body pose at 15 fps (LiDAR depth when the capture notes say so), \
@@ -132,6 +166,15 @@ enum CoachPrompt {
         Mark confidence "low" when the evidence is a partly occluded image. \
         Write for the lifter: short, direct, one cue at a time, no jargon \
         without explanation.
+
+        Coach, don't judge: open the summary with what the lifter did well \
+        before any faults, name the root physical cause behind each error \
+        (not just the symptom), and explain the biomechanical why behind \
+        every cue so the fix sticks. State every fault as the measured \
+        value against the standard (e.g. "lean 46° vs the 40° limit") \
+        before the cue — precise numbers, never vague phrasing. Never give \
+        dietary, supplement, or medical/rehabilitation advice — technique \
+        and load management only.
         """
     }
 
@@ -187,6 +230,12 @@ enum CoachPrompt {
                 if let lockout = rep.lockoutKneeDegrees {
                     line += String(format: ", top knee %.0f°", lockout)
                 }
+                if let shin = rep.shinAngleDegrees {
+                    line += String(format: ", shin %.0f°", shin)
+                }
+                if let balance = rep.balanceDriftRatio {
+                    line += String(format: ", bar-over-midfoot offset %.2f×hip width", balance)
+                }
                 lines.append(line)
             }
         case .benchPress:
@@ -207,6 +256,12 @@ enum CoachPrompt {
                 }
                 if let touch = rep.touchOffsetRatio {
                     line += String(format: ", touch offset %+.2f×shoulder width", touch)
+                }
+                if let tilt = rep.forearmTiltDegrees {
+                    line += String(format: ", forearm tilt %.0f°", tilt)
+                }
+                if let sticking = rep.stickingHeightFraction {
+                    line += String(format: ", slowest at %.0f%% of ascent", sticking * 100)
                 }
                 lines.append(line)
             }

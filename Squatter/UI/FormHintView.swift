@@ -200,6 +200,43 @@ private struct FormDiagram {
                     knee: (0.55, 0.72), ankle: (0.50, 0.92), torso: nil, legs: accent
                 )
             }
+        case .elbowsDown:
+            floor()
+            // Standing under the bar, seen from the side; the arm carries
+            // the fault: elbow swung up behind vs pointing at the floor.
+            sideFigure(
+                head: (0.52, 0.16), shoulder: (0.50, 0.28), hip: (0.47, 0.56),
+                knee: (0.52, 0.74), ankle: (0.49, 0.92)
+            )
+            if correct {
+                stroke([(0.50, 0.30), (0.38, 0.44)], accent) // upper arm down-back
+                stroke([(0.38, 0.44), (0.42, 0.30)], accent.opacity(0.7)) // forearm up to the bar
+                arrow(from: (0.30, 0.34), to: (0.30, 0.52), accent)
+            } else {
+                stroke([(0.50, 0.30), (0.30, 0.26)], accent) // upper arm swung high
+                stroke([(0.30, 0.26), (0.36, 0.16)], accent.opacity(0.7))
+                arrow(from: (0.24, 0.42), to: (0.24, 0.22), accent)
+            }
+        case .barOverMidfoot:
+            floor()
+            if correct {
+                sideFigure(
+                    head: (0.53, 0.26), shoulder: (0.50, 0.36), hip: (0.36, 0.68),
+                    knee: (0.58, 0.60), ankle: (0.50, 0.92)
+                )
+                // The bar's plumb line lands on the midfoot.
+                stroke([(0.50, 0.40), (0.50, 0.90)], accent, width: 1, dash: [3, 3])
+                disc(0.50, 0.90, radius: 0.02, accent)
+            } else {
+                sideFigure(
+                    head: (0.66, 0.34), shoulder: (0.61, 0.42), hip: (0.36, 0.68),
+                    knee: (0.58, 0.60), ankle: (0.48, 0.92)
+                )
+                // Plumb line falls ahead of the toes.
+                stroke([(0.61, 0.46), (0.61, 0.90)], accent, width: 1, dash: [3, 3])
+                disc(0.61, 0.90, radius: 0.02, accent)
+                arrow(from: (0.52, 0.86), to: (0.64, 0.86), accent)
+            }
         case .controlDescent:
             floor()
             sideFigure(

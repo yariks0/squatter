@@ -38,6 +38,10 @@ struct RepMetrics: Codable, Sendable, Identifiable {
     /// Horizontal bar-over-midfoot offset at the bottom (shoulder center vs
     /// ankle midpoint), as a fraction of hip width. Coach context.
     var balanceDriftRatio: Double?
+    /// Upper-arm angle from the torso line at the bottom (0° = arm hanging
+    /// along the torso). The "elbows down" measurement for a barbell squat:
+    /// a high-bar grip sits ~30–50°, lifted elbows swing past 70°.
+    var elbowLiftDegrees: Double?
 
     // MARK: Bench press (optional so squat sessions and old JSON decode;
     // squat-only fields above carry neutral values on bench reps and are
@@ -184,9 +188,10 @@ enum MetricsCalculator {
         return slowest?.height
     }
 
-    /// Upper-arm angle from the torso line at the touch, averaged over both
-    /// arms. The torso line points from the shoulder center toward the pelvis,
-    /// so 0° = upper arm pinned to the side, 90° = elbows flared to a T.
+    /// Upper-arm angle from the torso line, averaged over both arms. The
+    /// torso line points from the shoulder center toward the pelvis, so
+    /// 0° = upper arm along the torso. Serves two lifts: bench elbow flare
+    /// (90° = a T) and squat elbow lift (90° = elbows swung up to bar height).
     private static func elbowFlare(_ frame: JointFrame) -> Double? {
         guard let root = frame.position(.root),
               let shoulderCenter = frame.position(.centerShoulder) else { return nil }
@@ -301,7 +306,8 @@ enum MetricsCalculator {
             bottomHipShiftRatio: bottomHipShift(rep: rep, signal: signal, standingHeight: standingHeight, frames: frames),
             lockoutKneeDegrees: lockoutKnee(frames: frames, from: rep.endIndex, to: lockoutSearchEnd),
             shinAngleDegrees: shinAngle(bottom),
-            balanceDriftRatio: balanceDrift(bottom)
+            balanceDriftRatio: balanceDrift(bottom),
+            elbowLiftDegrees: elbowFlare(bottom)
         )
     }
 

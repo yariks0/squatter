@@ -11,6 +11,8 @@ enum FormHintTopic: String, Codable, CaseIterable, Sendable {
     case stanceWidth = "stance_width"
     case squatLockout = "squat_lockout"
     case controlDescent = "control_descent"
+    case elbowsDown = "elbows_down"
+    case barOverMidfoot = "bar_over_midfoot"
     // Bench press
     case benchTouch = "bench_touch"
     case elbowFlare = "elbow_flare"

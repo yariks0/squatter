@@ -69,6 +69,8 @@ enum FormRules {
         findings.append(contentsOf: depthFindings(reps))
         findings.append(contentsOf: valgusFindings(reps))
         findings.append(contentsOf: torsoFindings(reps))
+        findings.append(contentsOf: elbowLiftFindings(reps))
+        findings.append(contentsOf: balanceFindings(reps))
         findings.append(contentsOf: tempoFindings(reps))
         findings.append(contentsOf: asymmetryFindings(reps))
         findings.append(contentsOf: stanceFindings(reps))
@@ -388,6 +390,56 @@ enum FormRules {
             ))
         }
         return findings
+    }
+
+    /// Chinese practice: the elbows stay down under the bar, pointing at the
+    /// floor — they pin the bar to the back and keep the upper back tight.
+    /// Elbows swinging up/back let the bar roll and tip the chest forward.
+    private static func elbowLiftFindings(_ reps: [RepMetrics]) -> [Finding] {
+        let risky = reps.filter {
+            ($0.elbowLiftDegrees ?? 0) >= AnalysisTuning.elbowLiftRiskDegrees
+        }
+        let lifting = reps.filter {
+            let lift = $0.elbowLiftDegrees ?? 0
+            return lift >= AnalysisTuning.elbowLiftWarningDegrees
+                && lift < AnalysisTuning.elbowLiftRiskDegrees
+        }
+        var findings: [Finding] = []
+        if !risky.isEmpty {
+            findings.append(Finding(
+                severity: .risk,
+                title: "Elbows swinging up",
+                detail: "The upper arms swung near horizontal at the bottom on \(repList(risky)) — the bar rolls, the chest drops, and the wrists take the load. Point the elbows at the floor and pull them under the bar before you descend; if the grip won't allow it, widen the hands slightly.",
+                repNumbers: risky.map(\.repNumber),
+                topic: .elbowsDown
+            ))
+        }
+        if !lifting.isEmpty {
+            findings.append(Finding(
+                severity: .warning,
+                title: "Elbows creeping up",
+                detail: "Elbow lift rising at the bottom on \(repList(lifting)). The standard is elbows down under the bar — it locks the lats and upper back so the chest stays up. Cue: squeeze the bar into the traps and point the elbows at the floor.",
+                repNumbers: lifting.map(\.repNumber),
+                topic: .elbowsDown
+            ))
+        }
+        return findings
+    }
+
+    /// The bar (shoulder center in high-bar) stays stacked over the midfoot;
+    /// horizontal offset at the bottom is load on the lower back as shear.
+    private static func balanceFindings(_ reps: [RepMetrics]) -> [Finding] {
+        let drifting = reps.filter {
+            ($0.balanceDriftRatio ?? 0) >= AnalysisTuning.balanceDriftWarningRatio
+        }
+        guard !drifting.isEmpty else { return [] }
+        return [Finding(
+            severity: .warning,
+            title: "Bar off the midfoot",
+            detail: "The bar sat well off the midfoot line at the bottom on \(repList(drifting)) — every centimeter of horizontal offset is a moment arm the lower back has to hold. Keep the bar stacked over the middle of the foot: push the floor straight down and let the knees travel forward instead of tipping the chest.",
+            repNumbers: drifting.map(\.repNumber),
+            topic: .barOverMidfoot
+        )]
     }
 
     private static func tempoFindings(_ reps: [RepMetrics]) -> [Finding] {

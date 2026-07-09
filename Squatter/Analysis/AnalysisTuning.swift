@@ -66,6 +66,23 @@ enum AnalysisTuning {
     // without standing up fully.
     static let lockoutKneeDegrees = 160.0
 
+    // MARK: Elbow position (upper-arm angle from the torso line at the
+    // bottom; 0° = arm hanging along the torso). Chinese cue: elbows down,
+    // pointing at the floor, pinning the bar to the back — elbows swinging
+    // up/back let the bar roll and tip the chest. First-pass thresholds from
+    // high-bar grip geometry (elbows-down grip sits ~30–50°); set above the
+    // 46–81° band measured on the 2026-07-07/08 *bodyweight* squat sessions
+    // (arms held free) so those don't false-flag. Tune on barbell footage.
+    static let elbowLiftWarningDegrees = 70.0
+    static let elbowLiftRiskDegrees = 85.0
+
+    // MARK: Balance (horizontal bar-over-midfoot offset at the bottom:
+    // shoulder center vs ankle midpoint, as a fraction of hip width,
+    // magnitude only). Bodyweight sessions measure a 0.34–0.7 noise floor
+    // from the 45° camera; first-pass threshold sits above it. Tune on
+    // barbell footage.
+    static let balanceDriftWarningRatio = 0.9
+
     // MARK: Fatigue (relative depth loss between first and last reps)
     static let fatigueDepthLossFraction = 0.25
 

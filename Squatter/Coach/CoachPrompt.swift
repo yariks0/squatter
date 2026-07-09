@@ -113,6 +113,13 @@ enum CoachPrompt {
         than \(AnalysisTuning.slowConcentricSeconds) s is a grind. Grinding \
         is normal in dedicated heavy strength work; for technique-focused \
         sets it means the load is too heavy.
+        - Elbows stay down under the bar, pointing at the floor — they pin \
+        the bar to the back and keep the upper back tight; elbows swinging \
+        up lets the bar roll and tips the chest. The metric is the \
+        upper-arm angle from the torso line at the bottom (a settled \
+        high-bar grip sits around 30–50°): \
+        \(Int(AnalysisTuning.elbowLiftWarningDegrees))° warns and \
+        \(Int(AnalysisTuning.elbowLiftRiskDegrees))° is a risk.
         - Stance: heels around shoulder width, toes out ~30°. The metric is \
         ankle separation over shoulder width — below \
         \(AnalysisTuning.stanceNarrowRatio) is too narrow, above \
@@ -131,8 +138,10 @@ enum CoachPrompt {
         - The bar stays over the midfoot: the balance metric is the \
         horizontal offset of the bar (shoulder center in high-bar) from the \
         ankle midpoint in hip widths. Forward drift adds a horizontal \
-        moment arm that falls on the lower back as shear — treat a growing \
-        offset across a rep or set as an efficiency and safety signal.
+        moment arm that falls on the lower back as shear — beyond \
+        \(AnalysisTuning.balanceDriftWarningRatio) hip widths the rules \
+        engine flags it; below that, treat a growing offset across a rep \
+        or set as an efficiency and safety signal.
 
         How the data was measured: joint positions come from Apple Vision's \
         3D body pose at 15 fps (LiDAR depth when the capture notes say so), \
@@ -241,6 +250,9 @@ enum CoachPrompt {
                 }
                 if let balance = rep.balanceDriftRatio {
                     line += String(format: ", bar-over-midfoot offset %.2f×hip width", balance)
+                }
+                if let lift = rep.elbowLiftDegrees {
+                    line += String(format: ", elbow lift %.0f°", lift)
                 }
                 lines.append(line)
             }

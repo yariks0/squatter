@@ -16,8 +16,12 @@ struct Rep: Codable, Sendable, Equatable {
 /// frame), so absolute positions are not observable — every signal is a
 /// distance between tracked joints that contracts as the lifter descends:
 /// squat = hip height above the ankle midpoint (standing ≈ leg length,
-/// bottom ≈ half of it); bench = wrist midpoint above the shoulder midpoint
-/// (lockout ≈ arm length, bar at the chest ≈ zero).
+/// bottom ≈ half of it); bench = wrist-to-shoulder midpoint distance
+/// (lockout ≈ arm length, bar at the chest ≈ near zero). The bench signal
+/// must be a distance, not an axis projection: model space is not
+/// world-aligned for a lying body (verified on real footage 2026-07-08,
+/// where the Y projection collapsed to noise), and distances are invariant
+/// to the model-space orientation.
 enum RepSegmenter {
     static func segment(_ series: JointSeries, activity: ActivityType = .squat) -> [Rep] {
         let signal = liftSignal(series, activity: activity)
@@ -30,9 +34,21 @@ enum RepSegmenter {
         let baseline = standingBaseline(of: signal)
         guard baseline > 0 else { return [] }
 
-        let entry = baseline * AnalysisTuning.descentEntryFraction
-        let exit = baseline * AnalysisTuning.ascentExitFraction
-        let standing = baseline * AnalysisTuning.standingFraction
+        let (entryFraction, exitFraction, standingFraction) = switch activity {
+        case .squat: (
+            AnalysisTuning.descentEntryFraction,
+            AnalysisTuning.ascentExitFraction,
+            AnalysisTuning.standingFraction
+        )
+        case .benchPress: (
+            AnalysisTuning.benchDescentEntryFraction,
+            AnalysisTuning.benchAscentExitFraction,
+            AnalysisTuning.benchStandingFraction
+        )
+        }
+        let entry = baseline * entryFraction
+        let exit = baseline * exitFraction
+        let standing = baseline * standingFraction
         let frames = series.frames
 
         var reps: [Rep] = []
@@ -93,14 +109,15 @@ enum RepSegmenter {
     static func liftSignal(_ series: JointSeries, activity: ActivityType) -> [Double] {
         switch activity {
         case .squat: hipAboveAnkleSignal(series)
-        case .benchPress: wristAboveShoulderSignal(series)
+        case .benchPress: wristShoulderDistanceSignal(series)
         }
     }
 
-    /// Wrist midpoint height above the shoulder midpoint per frame — the bar
-    /// height signal for a lifter lying on a bench (press axis is world-up).
-    /// Falls back to the previous value when wrists are not tracked.
-    static func wristAboveShoulderSignal(_ series: JointSeries) -> [Double] {
+    /// Wrist-midpoint to shoulder-midpoint distance per frame — the bar
+    /// height signal for a lifter lying on a bench (lockout ≈ arm length,
+    /// bar at the chest ≈ near zero). Falls back to the previous value when
+    /// wrists are not tracked.
+    static func wristShoulderDistanceSignal(_ series: JointSeries) -> [Double] {
         var signal: [Double] = []
         signal.reserveCapacity(series.frames.count)
         var last = 0.0
@@ -112,7 +129,7 @@ enum RepSegmenter {
             if !wrists.isEmpty, !shoulders.isEmpty {
                 let wristMid = wrists.reduce(SIMD3<Float>.zero, +) / Float(wrists.count)
                 let shoulderMid = shoulders.reduce(SIMD3<Float>.zero, +) / Float(shoulders.count)
-                last = Double(wristMid.y - shoulderMid.y)
+                last = Double(simd_length(wristMid - shoulderMid))
             }
             signal.append(last)
         }

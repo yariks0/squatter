@@ -91,11 +91,12 @@ struct BenchAnalysisTests {
     }
 
     @Test func flagsSoftLockout() {
-        // restProgress runs through the easing curve, so 0.4 holds the arms
-        // ~35% short of lockout between reps (elbow ≈ 135°).
-        let analysis = SquatAnalyzer.analyze(
-            SyntheticBench(repCount: 5, restProgress: 0.4).series(), activity: .benchPress
-        )
+        // Elbows held slightly bent at the top of every rep (elbow ≈ 152°,
+        // below the 160° lockout threshold).
+        var generator = SyntheticBench(repCount: 5)
+        generator.lockoutElbowOffset = SIMD3(0.12, 0.28, 0.09)
+        generator.lockoutWristOffset = SIMD3(0.12, 0.53, 0.09)
+        let analysis = SquatAnalyzer.analyze(generator.series(), activity: .benchPress)
         #expect(analysis.findings.contains { $0.title == "Not locking out" })
     }
 

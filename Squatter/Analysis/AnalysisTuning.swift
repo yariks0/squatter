@@ -77,8 +77,18 @@ enum AnalysisTuning {
     // flared to a T), controlled descent, no bounce, full elbow lockout.
     // Thresholds are first-pass values to be tuned against real recordings.
 
+    // Rep segmentation (fractions of the lockout wrist-to-shoulder distance).
+    // Much wider hysteresis than the squat: touch-and-go sets barely dwell at
+    // lockout, and Vision's lying-body skeleton is noisy enough that the
+    // between-rep tops sag well below the true lockout distance. Tuned on the
+    // 2026-07-08 recording (8 real reps): 0.60/0.70/0.75 finds exactly the 8;
+    // looser entries start counting the unracking motions.
+    static let benchDescentEntryFraction = 0.6
+    static let benchAscentExitFraction = 0.7
+    static let benchStandingFraction = 0.75
+
     /// Fraction of lockout height the bar must descend to count as a rep.
-    /// Lockout ≈ arm length, chest ≈ zero, so a half rep is still ~0.5.
+    /// Lockout ≈ arm length, chest ≈ near zero, so a half rep is still ~0.5.
     static let benchMinimumRepDepthFraction = 0.35
 
     // Touch depth (average elbow flexion at the bottom, degrees;

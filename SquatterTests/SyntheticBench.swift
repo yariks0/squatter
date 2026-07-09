@@ -4,8 +4,10 @@ import simd
 
 /// Generates synthetic bench-press joint series in Vision's model-space
 /// convention (root at origin, y up, meters). The lifter lies along -z
-/// (head away from the pelvis), so the press axis is world-up and the bar
-/// height signal is the wrist midpoint above the shoulder midpoint.
+/// (head away from the pelvis). The bar height signal is the wrist-to-
+/// shoulder midpoint distance, so the touch offsets keep the wrists close
+/// to the shoulders — matching real footage, where Vision's lying-body
+/// skeleton compresses the touch distance to well under half of lockout.
 struct SyntheticBench {
     var repCount = 5
     /// Press progress held between reps: 0 = full lockout, >0 = the lifter
@@ -24,9 +26,9 @@ struct SyntheticBench {
     // Arm endpoints relative to each shoulder, mirrored in x per side.
     /// Wrist at the touch: directly above the touch elbow (vertical
     /// forearm), at a lower-chest touch point.
-    var touchWristOffset = SIMD3<Float>(0.225, 0.205, 0.186)
-    /// Elbow at the touch: tucked ~52° from the torso line.
-    var touchElbowOffset = SIMD3<Float>(0.225, -0.075, 0.186)
+    var touchWristOffset = SIMD3<Float>(0.11, 0.205, 0.09)
+    /// Elbow at the touch: tucked ~56° from the torso line.
+    var touchElbowOffset = SIMD3<Float>(0.11, -0.075, 0.09)
     var lockoutWristOffset = SIMD3<Float>(0, 0.58, 0)
     var lockoutElbowOffset = SIMD3<Float>(0, 0.30, 0)
 

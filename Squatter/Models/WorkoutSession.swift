@@ -37,6 +37,16 @@ final class WorkoutSession {
         try? JSONDecoder().decode(SquatAnalysis.self, from: analysisData)
     }
 
+    /// Replaces the stored analysis after a re-run over the original
+    /// recording (pipeline or threshold changes since the session was saved).
+    func update(with analysis: SquatAnalysis) throws {
+        analysisData = try JSONEncoder().encode(analysis)
+        score = analysis.score
+        repCount = analysis.reps.count
+        usedLiDAR = analysis.usedDepth
+        activityRaw = analysis.kind.rawValue
+    }
+
     /// Removes the recording files backing this session.
     func deleteFiles() {
         guard let directory = try? FileLocations.recordingsDirectory() else { return }

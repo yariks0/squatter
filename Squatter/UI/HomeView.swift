@@ -127,12 +127,8 @@ struct HomeView: View {
                 }
             }
             .navigationDestination(for: PersistentIdentifier.self) { id in
-                if let session = modelContext.model(for: id) as? WorkoutSession,
-                   let analysis = session.analysis(),
-                   let videoURL = session.videoURL {
-                    ReportView(analysis: analysis, videoURL: videoURL)
-                        .navigationTitle(session.date.formatted(date: .abbreviated, time: .shortened))
-                        .navigationBarTitleDisplayMode(.inline)
+                if let session = modelContext.model(for: id) as? WorkoutSession {
+                    SessionReportView(session: session)
                 } else {
                     ContentUnavailableView(
                         "Session unavailable",
@@ -193,6 +189,76 @@ struct HomeView: View {
             CoachReportStore.delete(for: videoURL)
         }
         refreshUnanalyzed()
+    }
+}
+
+/// Saved-session report with a toolbar action to re-run the analysis over
+/// the original recording — for sessions saved before pipeline or threshold
+/// changes. Re-analysis covers the whole recording; a trim window chosen at
+/// record time is not persisted on the session.
+private struct SessionReportView: View {
+    @Environment(\.modelContext) private var modelContext
+    let session: WorkoutSession
+    /// Bumped per re-analysis; a fresh id gives AnalysisView a fresh run.
+    @State private var reanalysisRun = 0
+
+    var body: some View {
+        Group {
+            if reanalysisRun > 0, let recording {
+                AnalysisView(recording: recording, activity: session.activity) { analysis in
+                    save(analysis)
+                }
+                .id(reanalysisRun)
+            } else if let analysis = session.analysis(), let videoURL = session.videoURL {
+                ReportView(analysis: analysis, videoURL: videoURL)
+            } else {
+                ContentUnavailableView(
+                    "Session unavailable",
+                    systemImage: "exclamationmark.triangle",
+                    description: Text("This session's data could not be loaded.")
+                )
+            }
+        }
+        .navigationTitle(session.date.formatted(date: .abbreviated, time: .shortened))
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    reanalysisRun += 1
+                } label: {
+                    Label("Re-analyze", systemImage: "arrow.clockwise")
+                }
+                .disabled(recording == nil)
+            }
+        }
+    }
+
+    /// The session's files as a recording, for re-extraction; nil when the
+    /// video is gone.
+    private var recording: RecordingResult? {
+        guard let videoURL = session.videoURL,
+              FileManager.default.fileExists(atPath: videoURL.path)
+        else { return nil }
+        let depthURL = session.depthFileName.flatMap { name in
+            (try? FileLocations.recordingsDirectory())?.appendingPathComponent(name)
+        }
+        let hasDepth = depthURL.map { FileManager.default.fileExists(atPath: $0.path) } ?? false
+        return RecordingResult(
+            videoURL: videoURL,
+            depthSidecarURL: hasDepth ? depthURL : nil,
+            duration: 0,
+            usedLiDAR: hasDepth
+        )
+    }
+
+    private func save(_ analysis: SquatAnalysis) {
+        try? session.update(with: analysis)
+        try? modelContext.save()
+        // The stored coach report narrates the replaced analysis; drop it so
+        // the report screen offers a fresh generation instead.
+        if let videoURL = session.videoURL {
+            CoachReportStore.delete(for: videoURL)
+        }
     }
 }
 

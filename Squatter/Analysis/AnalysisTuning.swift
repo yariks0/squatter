@@ -72,24 +72,38 @@ enum AnalysisTuning {
     // MARK: Smoothing
     static let smoothingWindow = 5
 
+    // MARK: Tracking quality gate
+    /// Median relative bone-length jitter (see `TrackingQuality`) above which
+    /// joint angles cannot be trusted: form rules are replaced by a single
+    /// tracking-quality finding. Well-framed squat sessions measure
+    /// 0.0003–0.0026; the badly framed 2026-07-08 bench recording, 0.035.
+    static let trackingJitterGateRatio = 0.01
+
     // MARK: - Bench press
     // Standards: bar touches the chest, elbows ~45–70° from the torso (not
     // flared to a T), controlled descent, no bounce, full elbow lockout.
     // Thresholds are first-pass values to be tuned against real recordings.
 
-    // Rep segmentation (fractions of the lockout wrist-to-shoulder distance).
-    // Much wider hysteresis than the squat: touch-and-go sets barely dwell at
-    // lockout, and Vision's lying-body skeleton is noisy enough that the
-    // between-rep tops sag well below the true lockout distance. Tuned on the
-    // 2026-07-08 recording (8 real reps): 0.60/0.70/0.75 finds exactly the 8;
-    // looser entries start counting the unracking motions.
-    static let benchDescentEntryFraction = 0.6
-    static let benchAscentExitFraction = 0.7
-    static let benchStandingFraction = 0.75
+    // Rep segmentation. The wrist–shoulder distance never nears zero on a
+    // real skeleton — the forearm keeps the wrist ~0.35–0.4 m from the
+    // shoulder at a legit chest touch (~60–70% of the lockout distance) —
+    // so bench hysteresis is normalized to the observed press range
+    // (floor = 10th percentile of the signal ≈ touch, baseline = 90th ≈
+    // lockout) instead of fractions of the lockout. That adapts to both
+    // clean skeletons and compressed noisy ones. Tuned on the 2026-07-08
+    // recording (8 real reps, segments 8/8) with the synthetic suite exact.
+    /// Press range below this fraction of the lockout distance means nobody
+    /// pressed — the lifter held the bar still, or the series is noise.
+    static let benchMinimumRangeFraction = 0.10
+    static let benchEntryRangeFraction = 0.30
+    static let benchExitRangeFraction = 0.50
+    static let benchStandingRangeFraction = 0.60
 
-    /// Fraction of lockout height the bar must descend to count as a rep.
-    /// Lockout ≈ arm length, chest ≈ near zero, so a half rep is still ~0.5.
-    static let benchMinimumRepDepthFraction = 0.35
+    /// Longest plausible bench rep, start back to lockout. Beyond this the
+    /// window is a settling hold under the bar or several reps merged by
+    /// tracking noise, not one rep (seen on device: a 9.5 s "rep" spanning
+    /// the pre-set hold).
+    static let benchMaximumRepDuration: TimeInterval = 6.0
 
     // Touch depth (average elbow flexion at the bottom, degrees;
     // 180 = arms straight). Deeper touch = smaller elbow angle.

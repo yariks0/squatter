@@ -33,6 +33,24 @@ enum FormRules {
         }
     }
 
+    /// The single finding shown when the skeleton was too unstable to trust
+    /// joint angles (see `TrackingQuality`): no form claims, just the reason
+    /// and how to film so the next set is measurable.
+    static func trackingQualityFinding(activity: ActivityType) -> Finding {
+        let framing = switch activity {
+        case .squat:
+            "Film from about 3 m at a 45° front-side angle with your whole body in frame."
+        case .benchPress:
+            "Film from about 3 m with your whole body — head to feet — in frame; a raised phone angled down at the bench keeps the head and hips visible."
+        }
+        return Finding(
+            severity: .warning,
+            title: "Tracking too unstable to judge form",
+            detail: "The body couldn't be tracked reliably in this recording, so form feedback was skipped — any angle-based call would be noise, and the rep count may be off. " + framing,
+            repNumbers: []
+        )
+    }
+
     private static func squatFindings(for reps: [RepMetrics]) -> [Finding] {
         guard !reps.isEmpty else {
             return [Finding(

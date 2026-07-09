@@ -4,10 +4,10 @@ import simd
 
 /// Generates synthetic bench-press joint series in Vision's model-space
 /// convention (root at origin, y up, meters). The lifter lies along -z
-/// (head away from the pelvis). The bar height signal is the wrist-to-
-/// shoulder midpoint distance, so the touch offsets keep the wrists close
-/// to the shoulders — matching real footage, where Vision's lying-body
-/// skeleton compresses the touch distance to well under half of lockout.
+/// (head away from the pelvis). The arm interpolates between the lockout
+/// and touch poses by rotating the upper-arm and forearm directions while
+/// keeping their lengths fixed from the lockout pose — a real skeleton
+/// keeps its bone lengths, and `TrackingQuality` gates on exactly that.
 struct SyntheticBench {
     var repCount = 5
     /// Press progress held between reps: 0 = full lockout, >0 = the lifter
@@ -26,9 +26,9 @@ struct SyntheticBench {
     // Arm endpoints relative to each shoulder, mirrored in x per side.
     /// Wrist at the touch: directly above the touch elbow (vertical
     /// forearm), at a lower-chest touch point.
-    var touchWristOffset = SIMD3<Float>(0.11, 0.205, 0.09)
-    /// Elbow at the touch: tucked ~56° from the torso line.
-    var touchElbowOffset = SIMD3<Float>(0.11, -0.075, 0.09)
+    var touchWristOffset = SIMD3<Float>(0.225, 0.205, 0.186)
+    /// Elbow at the touch: tucked ~52° from the torso line.
+    var touchElbowOffset = SIMD3<Float>(0.225, -0.075, 0.186)
     var lockoutWristOffset = SIMD3<Float>(0, 0.58, 0)
     var lockoutElbowOffset = SIMD3<Float>(0, 0.30, 0)
 
@@ -74,13 +74,24 @@ struct SyntheticBench {
         positions[.centerHead] = SIMD3(0, 0.02, -torsoLength - 0.15)
         positions[.topHead] = SIMD3(0, 0.03, -torsoLength - 0.3)
 
+        // Bone lengths come from the lockout pose; the touch offsets only
+        // steer the segment directions, so bones stay constant every frame.
+        let upperArmLength = simd_length(lockoutElbowOffset)
+        let forearmLength = simd_length(lockoutWristOffset - lockoutElbowOffset)
+        func blend(_ lockout: SIMD3<Float>, _ touch: SIMD3<Float>) -> SIMD3<Float> {
+            simd_normalize(simd_normalize(lockout) + (simd_normalize(touch) - simd_normalize(lockout)) * eased)
+        }
+        let elbowDirection = blend(lockoutElbowOffset, touchElbowOffset)
+        let forearmDirection = blend(
+            lockoutWristOffset - lockoutElbowOffset,
+            touchWristOffset - touchElbowOffset
+        )
+
         for (side, sign) in [("left", Float(-1)), ("right", Float(1))] {
             let shoulder = positions[.centerShoulder]! + SIMD3(sign * shoulderHalfWidth, 0, 0)
             let mirror = SIMD3<Float>(sign, 1, 1)
-            let elbow = shoulder
-                + (lockoutElbowOffset + (touchElbowOffset - lockoutElbowOffset) * eased) * mirror
-            let wrist = shoulder
-                + (lockoutWristOffset + (touchWristOffset - lockoutWristOffset) * eased) * mirror
+            let elbow = shoulder + elbowDirection * upperArmLength * mirror
+            let wrist = elbow + forearmDirection * forearmLength * mirror
             // Legs bent, feet planted past the bench.
             let hip = SIMD3(sign * hipHalfWidth, 0, 0)
             let knee = hip + SIMD3(sign * 0.03, 0.08, 0.4)

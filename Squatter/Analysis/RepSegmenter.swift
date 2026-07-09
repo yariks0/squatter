@@ -25,30 +25,39 @@ struct Rep: Codable, Sendable, Equatable {
 enum RepSegmenter {
     static func segment(_ series: JointSeries, activity: ActivityType = .squat) -> [Rep] {
         let signal = liftSignal(series, activity: activity)
-        let minimumDepthFraction = switch activity {
-        case .squat: AnalysisTuning.minimumRepDepthFraction
-        case .benchPress: AnalysisTuning.benchMinimumRepDepthFraction
-        }
         guard signal.count > 4 else { return [] }
 
         let baseline = standingBaseline(of: signal)
         guard baseline > 0 else { return [] }
 
-        let (entryFraction, exitFraction, standingFraction) = switch activity {
-        case .squat: (
-            AnalysisTuning.descentEntryFraction,
-            AnalysisTuning.ascentExitFraction,
-            AnalysisTuning.standingFraction
-        )
-        case .benchPress: (
-            AnalysisTuning.benchDescentEntryFraction,
-            AnalysisTuning.benchAscentExitFraction,
-            AnalysisTuning.benchStandingFraction
-        )
+        let entry: Double
+        let exit: Double
+        let standing: Double
+        let minimumDepth: Double
+        let maximumDuration: TimeInterval
+        switch activity {
+        case .squat:
+            // The hip-above-ankle signal spans standing → near zero, so
+            // thresholds are fractions of the standing baseline.
+            entry = baseline * AnalysisTuning.descentEntryFraction
+            exit = baseline * AnalysisTuning.ascentExitFraction
+            standing = baseline * AnalysisTuning.standingFraction
+            minimumDepth = baseline * AnalysisTuning.minimumRepDepthFraction
+            maximumDuration = .infinity
+        case .benchPress:
+            // The wrist–shoulder distance only spans lockout → chest touch
+            // (~60–100% of arm length on a clean skeleton), so thresholds
+            // are normalized to the observed press range instead.
+            let floor = percentile(of: signal, 0.1)
+            let range = baseline - floor
+            guard range >= baseline * AnalysisTuning.benchMinimumRangeFraction else { return [] }
+            entry = floor + range * AnalysisTuning.benchEntryRangeFraction
+            exit = floor + range * AnalysisTuning.benchExitRangeFraction
+            standing = floor + range * AnalysisTuning.benchStandingRangeFraction
+            // Crossing the entry threshold already proves press depth.
+            minimumDepth = 0
+            maximumDuration = AnalysisTuning.benchMaximumRepDuration
         }
-        let entry = baseline * entryFraction
-        let exit = baseline * exitFraction
-        let standing = baseline * standingFraction
         let frames = series.frames
 
         var reps: [Rep] = []
@@ -80,8 +89,9 @@ enum RepSegmenter {
 
             let depth = baseline - signal[bottom]
             let duration = frames[end].time - frames[start].time
-            if depth >= baseline * minimumDepthFraction,
-               duration >= AnalysisTuning.minimumRepDuration {
+            if depth >= minimumDepth,
+               duration >= AnalysisTuning.minimumRepDuration,
+               duration <= maximumDuration {
                 reps.append(Rep(
                     startIndex: start,
                     bottomIndex: bottom,
@@ -100,9 +110,13 @@ enum RepSegmenter {
     /// Standing height baseline: 90th percentile of the signal, robust to
     /// both the descent phases and occasional tracking spikes.
     static func standingBaseline(of signal: [Double]) -> Double {
+        percentile(of: signal, 0.9)
+    }
+
+    private static func percentile(of signal: [Double], _ fraction: Double) -> Double {
         guard !signal.isEmpty else { return 0 }
         let sorted = signal.sorted()
-        return sorted[min(signal.count - 1, Int(Double(signal.count) * 0.9))]
+        return sorted[min(signal.count - 1, Int(Double(signal.count) * fraction))]
     }
 
     /// The contracting rep signal for an activity.

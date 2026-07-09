@@ -9,6 +9,9 @@ final class RecordingViewModel {
     enum Phase: Equatable {
         case preparing
         case ready
+        /// Waiting for the lifter to walk into frame; spoken guidance runs
+        /// and the countdown auto-starts once framing holds green.
+        case positioning
         case countdown(Int)
         case recording
         case finishing
@@ -19,9 +22,12 @@ final class RecordingViewModel {
     private(set) var framing: FramingChecker.Status = .noBody
     private(set) var elapsed: TimeInterval = 0
     private(set) var usesLiDAR = false
+    private(set) var liveRepCount = 0
 
     let camera = CameraService()
+    let voice = SetVoice()
     private var framingChecker: FramingChecker?
+    private var repCounter: LiveRepCounter
     private var timerTask: Task<Void, Never>?
     private let activity: ActivityType
     private let onFinished: (RecordingResult) -> Void
@@ -29,6 +35,7 @@ final class RecordingViewModel {
     init(activity: ActivityType = .squat, onFinished: @escaping (RecordingResult) -> Void) {
         self.activity = activity
         self.onFinished = onFinished
+        self.repCounter = LiveRepCounter(activity: activity)
     }
 
     func start() async {
@@ -36,9 +43,11 @@ final class RecordingViewModel {
             phase = .failed(CameraService.CameraError.permissionDenied.localizedDescription)
             return
         }
-        let checker = FramingChecker(activity: activity) { [weak self] status in
-            Task { @MainActor in self?.framing = status }
-        }
+        let checker = FramingChecker(activity: activity, onStatus: { [weak self] status in
+            Task { @MainActor in self?.updateFraming(status) }
+        }, onPose: { [weak self] sample in
+            Task { @MainActor in self?.handlePose(sample) }
+        })
         framingChecker = checker
         camera.frameSink = { [weak checker] buffer in checker?.submit(buffer) }
         do {
@@ -52,16 +61,79 @@ final class RecordingViewModel {
         }
     }
 
-    func beginCountdown() {
-        guard phase == .ready else { return }
-        timerTask = Task { [self] in
-            for tick in stride(from: 5, through: 1, by: -1) {
-                phase = .countdown(tick)
-                try? await Task.sleep(for: .seconds(1))
-                if Task.isCancelled { return }
-            }
-            await beginRecording()
+    private func updateFraming(_ status: FramingChecker.Status) {
+        framing = status
+        if phase == .positioning {
+            voice.speakGuidance(status.message)
         }
+    }
+
+    private func handlePose(_ sample: LivePoseSample) {
+        switch phase {
+        case .positioning where framing == .fullBodyVisible:
+            repCounter.calibrate(with: sample)
+        case .recording:
+            guard case let .repCompleted(count, faults) = repCounter.ingest(sample) else { return }
+            liveRepCount = count
+            voice.speak(CoachScript.repLine(count: count, faults: faults), interrupting: true)
+        default:
+            break
+        }
+    }
+
+    /// Start-set flow: wait in `.positioning` until framing holds green for
+    /// `liveFramingHoldSeconds`, then count down and record. A timeout
+    /// force-starts so a hard-to-detect position never strands the lifter.
+    func beginPositioning() {
+        guard phase == .ready else { return }
+        phase = .positioning
+        voice.speak("Get into position")
+        timerTask = Task { [self] in
+            let started = Date()
+            var greenSince: Date?
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(0.25))
+                guard phase == .positioning else { return }
+                if framing == .fullBodyVisible {
+                    greenSince = greenSince ?? Date()
+                    if Date().timeIntervalSince(greenSince!) >= AnalysisTuning.liveFramingHoldSeconds {
+                        await runCountdown()
+                        return
+                    }
+                } else {
+                    greenSince = nil
+                }
+                if Date().timeIntervalSince(started) > AnalysisTuning.livePositioningTimeoutSeconds {
+                    voice.speak("Couldn't confirm framing — starting anyway")
+                    await runCountdown()
+                    return
+                }
+            }
+        }
+    }
+
+    /// Positioning escape hatch: skip the framing gate.
+    func forceStart() {
+        guard phase == .positioning else { return }
+        timerTask?.cancel()
+        timerTask = Task { [self] in await runCountdown() }
+    }
+
+    func cancelPositioning() {
+        guard phase == .positioning else { return }
+        timerTask?.cancel()
+        voice.finish()
+        phase = .ready
+    }
+
+    private func runCountdown() async {
+        for tick in stride(from: 3, through: 1, by: -1) {
+            phase = .countdown(tick)
+            voice.speak("\(tick)", interrupting: true)
+            try? await Task.sleep(for: .seconds(1))
+            if Task.isCancelled { return }
+        }
+        await beginRecording()
     }
 
     private func beginRecording() async {
@@ -72,6 +144,7 @@ final class RecordingViewModel {
             AudioServicesPlaySystemSound(1113)
             phase = .recording
             elapsed = 0
+            liveRepCount = 0
             timerTask = Task { [self] in
                 let start = Date()
                 while !Task.isCancelled {
@@ -87,6 +160,7 @@ final class RecordingViewModel {
     func stopAndFinish() async {
         guard phase == .recording else { return }
         timerTask?.cancel()
+        voice.finish()
         phase = .finishing
         do {
             let result = try await camera.stopRecording()
@@ -99,6 +173,7 @@ final class RecordingViewModel {
 
     func cancel() {
         timerTask?.cancel()
+        voice.finish()
         camera.stop()
         UIApplication.shared.isIdleTimerDisabled = false
     }
@@ -106,6 +181,7 @@ final class RecordingViewModel {
 
 struct RecordView: View {
     @State private var model: RecordingViewModel
+    @AppStorage(SetVoice.enabledDefaultsKey) private var voiceEnabled = true
     @Environment(\.dismiss) private var dismiss
 
     init(activity: ActivityType = .squat, onFinished: @escaping (RecordingResult) -> Void) {
@@ -127,8 +203,11 @@ struct RecordView: View {
     @ViewBuilder
     private var overlay: some View {
         VStack {
-            framingBadge
-                .padding(.top, 8)
+            HStack(spacing: 8) {
+                framingBadge
+                voiceToggle
+            }
+            .padding(.top, 8)
             Spacer()
             switch model.phase {
             case .preparing:
@@ -141,11 +220,34 @@ struct RecordView: View {
                     .padding()
             case .ready:
                 Button {
-                    model.beginCountdown()
+                    model.beginPositioning()
                 } label: {
                     Label("Start set", systemImage: "record.circle")
                 }
                 .buttonStyle(KodoProminentButtonStyle())
+                .padding(.bottom, 40)
+            case .positioning:
+                VStack(spacing: 14) {
+                    Text("Walk into position — recording starts once framing holds green")
+                        .font(.subheadline.bold())
+                        .foregroundStyle(.white)
+                        .multilineTextAlignment(.center)
+                        .shadow(radius: 4)
+                        .padding(.horizontal, 32)
+                    HStack(spacing: 12) {
+                        Button {
+                            model.forceStart()
+                        } label: {
+                            Label("Record now", systemImage: "record.circle")
+                        }
+                        .buttonStyle(KodoProminentButtonStyle())
+                        Button("Cancel") {
+                            model.cancelPositioning()
+                        }
+                        .buttonStyle(.bordered)
+                        .tint(.white)
+                    }
+                }
                 .padding(.bottom, 40)
             case .countdown(let tick):
                 Text("\(tick)")
@@ -155,6 +257,14 @@ struct RecordView: View {
                     .padding(.bottom, 120)
             case .recording:
                 VStack(spacing: 16) {
+                    if model.liveRepCount > 0 {
+                        // Readable from the bar, 3 m away.
+                        Text("\(model.liveRepCount)")
+                            .font(.system(size: 96, weight: .black, design: .rounded))
+                            .foregroundStyle(.white)
+                            .shadow(radius: 8)
+                            .contentTransition(.numericText())
+                    }
                     Text(timeString(model.elapsed))
                         .font(.title.monospacedDigit().bold())
                         .foregroundStyle(.white)
@@ -174,6 +284,20 @@ struct RecordView: View {
                     .padding(.bottom, 60)
             }
         }
+    }
+
+    private var voiceToggle: some View {
+        Button {
+            voiceEnabled.toggle()
+            model.voice.enabled = voiceEnabled
+        } label: {
+            Image(systemName: voiceEnabled ? "speaker.wave.2.fill" : "speaker.slash.fill")
+                .font(.subheadline.bold())
+                .foregroundStyle(.white)
+                .padding(10)
+                .background(.black.opacity(0.45), in: Circle())
+        }
+        .accessibilityLabel(voiceEnabled ? "Mute voice coach" : "Unmute voice coach")
     }
 
     private var framingBadge: some View {

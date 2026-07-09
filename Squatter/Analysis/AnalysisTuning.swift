@@ -89,6 +89,55 @@ enum AnalysisTuning {
     // MARK: Smoothing
     static let smoothingWindow = 5
 
+    // MARK: Live set tracking (2D image-space signals at ~10 Hz while
+    // recording, driving spoken feedback only — the offline 3D analysis
+    // remains the truth for the report). First-pass values.
+    /// Seconds framing must hold green before the countdown auto-starts.
+    static let liveFramingHoldSeconds: TimeInterval = 2.0
+    /// Positioning give-up window; recording force-starts after it so a
+    /// hard-to-detect position (lying on a bench) never strands the lifter.
+    static let livePositioningTimeoutSeconds: TimeInterval = 90
+    /// Squat rep hysteresis: the hip-midpoint drop below standing that
+    /// enters/exits a rep, as fractions of the lifter's image-space body
+    /// span (nose to ankles).
+    static let liveSquatEntryDropFraction = 0.12
+    static let liveSquatExitDropFraction = 0.06
+    /// Normalized-image margin by which the hip midpoint must stay above
+    /// the knee midpoint at the turnaround before the rep is called "high".
+    static let liveSquatHighMargin = 0.02
+    /// Bench rep hysteresis, as fractions of the rolling lockout
+    /// (wrist–shoulder) distance.
+    static let liveBenchEntryFraction = 0.75
+    static let liveBenchExitFraction = 0.88
+    /// Live entry-crossing→bottom time below which the descent was a free
+    /// fall. The live clock starts at the entry crossing (~40–50% into the
+    /// descent), so this is roughly half the offline 0.6 s eccentric
+    /// minimum: a controlled 1.5 s descent measures ~0.8 s live, a drop
+    /// measures ~0.2 s.
+    static let liveFastDescentSeconds: TimeInterval = 0.45
+    /// Live bottom→exit time beyond which the ascent was a grind (the
+    /// bottom-to-near-standing crossing captures the full concentric).
+    static let liveSlowAscentSeconds: TimeInterval = 2.5
+    /// Median image-space torso lean over the in-rep window beyond which
+    /// the torso folded. The 45° camera compresses projected lean, so this
+    /// only fires on a real fold (~60°+): normal bottoms project ~15–25°.
+    static let liveSquatFoldDegrees = 40.0
+    /// Median image-space upper-arm angle from the torso line over the
+    /// in-rep window beyond which the elbows swung up off the bar. A
+    /// settled high-bar grip projects well under this; conservative so it
+    /// only fires on elbows clearly climbing.
+    static let liveElbowLiftDegrees = 75.0
+    /// Bench bottom-dwell band (fraction of the lockout distance) and the
+    /// dwell below which the touch was a bounce off the chest.
+    static let liveBounceBandFraction = 0.05
+    static let liveBounceMaxSeconds: TimeInterval = 0.15
+    /// A bench rep whose depth falls below this fraction of the set's
+    /// median rep depth was cut high (needs two reps of history).
+    static let liveBenchCutHighFraction = 0.7
+    /// Rolling window for the standing/lockout baseline (a decaying max):
+    /// long enough to survive a slow rep, short enough to track drift.
+    static let liveBaselineWindowSeconds: TimeInterval = 10
+
     // MARK: Tracking quality gate
     /// Median relative bone-length jitter (see `TrackingQuality`) above which
     /// joint angles cannot be trusted: form rules are replaced by a single

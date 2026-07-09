@@ -47,9 +47,14 @@ struct SetupGuideView: View {
             text: "Head to feet visible for the entire set, including the deepest point. The indicator on the next screen turns green when framing is right."
         )
         step(
-            icon: "timer",
-            title: "5-second countdown",
-            text: "Start the countdown, get set, squat. Tap finish when you rack — or walk to the phone; extra seconds don't hurt the analysis."
+            icon: "waveform",
+            title: "The phone talks you in",
+            text: "Tap start and walk to the bar — the phone speaks placement guidance, counts down by itself once framing holds green, then counts your reps out loud (and calls “high” on shallow ones). Mute it with the speaker button."
+        )
+        step(
+            icon: "stop.circle",
+            title: "Finish when you rack",
+            text: "Tap finish at the phone when you're done; extra seconds don't hurt the analysis."
         )
         step(
             icon: "lightbulb.max",
@@ -76,9 +81,14 @@ struct SetupGuideView: View {
             text: "Head to feet visible for the entire set, including the bar at lockout. The indicator on the next screen turns green when framing is right."
         )
         step(
-            icon: "timer",
-            title: "5-second countdown",
-            text: "Start the countdown, lie back, unrack, press. Tap finish when you rack — or walk to the phone; extra seconds don't hurt the analysis."
+            icon: "waveform",
+            title: "The phone talks you in",
+            text: "Tap start and lie back — the phone speaks placement guidance, counts down by itself once framing holds green, then counts your reps out loud. If it can't see you on the bench, tap “Record now” or wait; it starts anyway after a while."
+        )
+        step(
+            icon: "stop.circle",
+            title: "Finish when you rack",
+            text: "Tap finish at the phone when you're done; extra seconds don't hurt the analysis."
         )
         step(
             icon: "lightbulb.max",

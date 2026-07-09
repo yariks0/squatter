@@ -22,9 +22,25 @@ struct RepTimelineView: View {
     init(analysis: SquatAnalysis, playback: PlaybackModel) {
         self.analysis = analysis
         self.playback = playback
-        let signal = RepSegmenter.liftSignal(analysis.series, activity: analysis.kind)
+        // Display-only median filter: single-frame tracking dropouts spike
+        // the lift signal well past any real movement, and the median kills
+        // them without rounding off rep edges the way a wider moving
+        // average would. Analysis keeps the unfiltered signal.
+        let signal = medianFiltered(
+            RepSegmenter.liftSignal(analysis.series, activity: analysis.kind),
+            window: 5
+        )
         let baseline = RepSegmenter.standingBaseline(of: signal)
-        let maxDepth = baseline - (signal.min() ?? baseline)
+        // Bench tracking compresses the wrist–shoulder distance far below any
+        // real touch on bad frames, so scaling to the signal minimum squashes
+        // the actual presses into a sliver at the top. Use the segmenter's
+        // range normalization instead and let outliers clamp; the squat
+        // signal is clean enough that its minimum is the true deepest point.
+        let floor = switch analysis.kind {
+        case .squat: signal.min() ?? baseline
+        case .benchPress: RepSegmenter.touchFloor(of: signal)
+        }
+        let maxDepth = baseline - floor
         if baseline > 0, maxDepth > 0 {
             samples = zip(analysis.series.frames, signal).map { frame, value in
                 CGPoint(x: frame.time, y: min(max((baseline - value) / maxDepth, 0), 1))
@@ -110,6 +126,7 @@ struct RepTimelineView: View {
             TimelineGraph(
                 samples: samples,
                 reps: analysis.reps,
+                activity: analysis.kind,
                 pointsPerSecond: Self.pointsPerSecond
             )
             .frame(width: max(duration, 1) * Self.pointsPerSecond, height: graphHeight)
@@ -148,12 +165,23 @@ struct RepTimelineView: View {
     }
 }
 
+/// Centered running median; ends use the samples available.
+private func medianFiltered(_ values: [Double], window: Int) -> [Double] {
+    guard window > 1, values.count > window else { return values }
+    let half = window / 2
+    return values.indices.map { index in
+        let neighborhood = values[max(0, index - half) ... min(values.count - 1, index + half)]
+        return neighborhood.sorted()[neighborhood.count / 2]
+    }
+}
+
 /// The plotted curve: squat depth pointing down like the movement itself,
 /// with a dashed standing line and a numbered marker at every rep's bottom.
 @available(iOS 18.0, *)
 private struct TimelineGraph: View {
     let samples: [CGPoint]
     let reps: [RepMetrics]
+    let activity: ActivityType
     let pointsPerSecond: CGFloat
 
     var body: some View {
@@ -176,16 +204,40 @@ private struct TimelineGraph: View {
             area.addLine(to: CGPoint(x: point(samples[samples.count - 1]).x, y: topInset))
             area.addLine(to: CGPoint(x: point(samples[0]).x, y: topInset))
             area.closeSubpath()
-            context.fill(area, with: .linearGradient(
-                Gradient(colors: [.teal.opacity(0.05), .teal.opacity(0.35)]),
-                startPoint: CGPoint(x: 0, y: topInset),
-                endPoint: CGPoint(x: 0, y: size.height)
-            ))
-            context.stroke(
-                line,
-                with: .color(.teal),
-                style: StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round)
-            )
+
+            func drawCurve(in context: GraphicsContext) {
+                context.fill(area, with: .linearGradient(
+                    Gradient(colors: [.teal.opacity(0.05), .teal.opacity(0.35)]),
+                    startPoint: CGPoint(x: 0, y: topInset),
+                    endPoint: CGPoint(x: 0, y: size.height)
+                ))
+                context.stroke(
+                    line,
+                    with: .color(.teal),
+                    style: StrokeStyle(lineWidth: 2, lineCap: .round, lineJoin: .round)
+                )
+            }
+            // Outside the reps the signal is setup/rack time where tracking
+            // is mostly noise — recede it so the reps carry the chart.
+            if reps.isEmpty {
+                drawCurve(in: context)
+            } else {
+                var dimmed = context
+                dimmed.opacity = 0.25
+                drawCurve(in: dimmed)
+
+                var vivid = context
+                var repWindows = Path()
+                for rep in reps {
+                    repWindows.addRect(CGRect(
+                        x: rep.startTime * pointsPerSecond, y: 0,
+                        width: (rep.endTime - rep.startTime) * pointsPerSecond,
+                        height: size.height
+                    ))
+                }
+                vivid.clip(to: repWindows)
+                drawCurve(in: vivid)
+            }
 
             var standing = Path()
             standing.move(to: CGPoint(x: 0, y: topInset))
@@ -223,12 +275,29 @@ private struct TimelineGraph: View {
     }
 
     private func color(for rep: RepMetrics) -> Color {
-        if rep.hipBelowKneeDegrees >= AnalysisTuning.fullDepthDegrees {
-            .green
-        } else if rep.hipBelowKneeDegrees >= AnalysisTuning.parallelToleranceDegrees {
-            .orange
-        } else {
-            .red
+        switch activity {
+        case .squat:
+            if rep.hipBelowKneeDegrees >= AnalysisTuning.fullDepthDegrees {
+                .green
+            } else if rep.hipBelowKneeDegrees >= AnalysisTuning.parallelToleranceDegrees {
+                .orange
+            } else {
+                .red
+            }
+        case .benchPress:
+            // Touch depth carries the marker: elbow flexion at the bottom
+            // (180 = straight arm, smaller = deeper touch).
+            if let elbow = rep.elbowFlexionDegrees {
+                if elbow <= AnalysisTuning.benchFullTouchElbowDegrees {
+                    .green
+                } else if elbow <= AnalysisTuning.benchShallowElbowDegrees {
+                    .orange
+                } else {
+                    .red
+                }
+            } else {
+                .gray
+            }
         }
     }
 }

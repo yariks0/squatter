@@ -34,20 +34,26 @@ enum PoseExtractor {
         }
         let duration = try await asset.load(.duration).seconds
         let movieStart = try await track.load(.timeRange).start.seconds
-        let reader = try AVAssetReader(asset: asset)
-        let output = AVAssetReaderTrackOutput(track: track, outputSettings: [
-            kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
-        ])
-        output.alwaysCopiesSampleData = false
-        guard reader.canAdd(output) else { throw PoseExtractionError.readerFailed }
-        reader.add(output)
-        if let timeRange {
+        let windowStart = timeRange?.lowerBound ?? 0
+        let windowEnd = timeRange?.upperBound ?? duration
+
+        func makeReader(from start: TimeInterval) throws -> (AVAssetReader, AVAssetReaderTrackOutput) {
+            let reader = try AVAssetReader(asset: asset)
+            let output = AVAssetReaderTrackOutput(track: track, outputSettings: [
+                kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
+            ])
+            output.alwaysCopiesSampleData = false
+            guard reader.canAdd(output) else { throw PoseExtractionError.readerFailed }
+            reader.add(output)
             reader.timeRange = CMTimeRange(
-                start: CMTime(seconds: movieStart + timeRange.lowerBound, preferredTimescale: 600),
-                duration: CMTime(seconds: timeRange.upperBound - timeRange.lowerBound, preferredTimescale: 600)
+                start: CMTime(seconds: movieStart + start, preferredTimescale: 600),
+                end: CMTime(seconds: movieStart + windowEnd, preferredTimescale: 600)
             )
+            guard reader.startReading() else { throw PoseExtractionError.readerFailed }
+            return (reader, output)
         }
-        guard reader.startReading() else { throw PoseExtractionError.readerFailed }
+
+        var (reader, output) = try makeReader(from: windowStart)
         defer { reader.cancelReading() }
 
         let depthReader = depthSidecarURL.flatMap { try? DepthSidecarReader(url: $0) }
@@ -64,67 +70,93 @@ enum PoseExtractor {
         // Progress is reported over the analyzed window; frame times stay on
         // the movie timeline so trimmed analyses still sync with playback of
         // the full recording (overlays, rep timeline, keyframes).
-        let windowStart = timeRange?.lowerBound ?? 0
-        let windowDuration = timeRange.map { $0.upperBound - $0.lowerBound } ?? duration
+        let windowDuration = windowEnd - windowStart
+        var resumeProgressMark = -Double.infinity
+        var resumesWithoutProgress = 0
 
-        while let sample = output.copyNextSampleBuffer() {
-            try Task.checkCancellation()
-            guard let pixelBuffer = CMSampleBufferGetImageBuffer(sample) else { continue }
-            let presentationTime = CMSampleBufferGetPresentationTimeStamp(sample).seconds
-            let time = presentationTime - movieStart
-            guard time - lastAnalyzedTime >= minInterval else { continue }
-            lastAnalyzedTime = time
+        while true {
+            while let sample = output.copyNextSampleBuffer() {
+                try Task.checkCancellation()
+                guard let pixelBuffer = CMSampleBufferGetImageBuffer(sample) else { continue }
+                let presentationTime = CMSampleBufferGetPresentationTimeStamp(sample).seconds
+                let time = presentationTime - movieStart
+                guard time - lastAnalyzedTime >= minInterval else { continue }
+                lastAnalyzedTime = time
 
-            // Advance the depth stream to the record closest to this frame.
-            while let next = upcomingDepth, next.time <= time {
-                previousDepth = next
-                upcomingDepth = depthReader?.next()
-            }
-            var closestDepth = previousDepth
-            if let next = upcomingDepth,
-               abs(next.time - time) < abs((closestDepth?.time ?? -.infinity) - time) {
-                closestDepth = next
-            }
-            var depthData: AVDepthData? = closestDepth.flatMap {
-                abs($0.time - time) <= depthTolerance ? $0.depthData : nil
-            }
-            // Depth is only sampled at joint image points, so its orientation
-            // must match the video frame. Sidecars recorded before the depth
-            // connection was rotated are landscape; skip depth for those.
-            if let depth = depthData {
-                let map = depth.depthDataMap
-                let depthPortrait = CVPixelBufferGetHeight(map) >= CVPixelBufferGetWidth(map)
-                let videoPortrait = CVPixelBufferGetHeight(pixelBuffer) >= CVPixelBufferGetWidth(pixelBuffer)
-                if depthPortrait != videoPortrait { depthData = nil }
-            }
-
-            // Depth is deliberately NOT handed to Vision. Sidecar depth has no
-            // camera calibration (the dictionary representation we persist
-            // drops it, and the rotated capture connection invalidates the
-            // intrinsics anyway), and VNDetectHumanBodyPose3DRequest's camera
-            // registration hard-aborts on such depth (C++ assert in
-            // AltruisticBodyPoseKit's PoseRefiner — not a catchable error).
-            // Instead LiDAR provides what it is actually good for here: the
-            // metric scale, measured directly off the depth map below.
-            let request = VNDetectHumanBodyPose3DRequest()
-            let request2D = VNDetectHumanBodyPoseRequest()
-            let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, orientation: .up)
-            try? handler.perform([request, request2D])
-            if let observation = request.results?.first {
-                let jointFrame = frame(from: observation, pose2D: request2D.results?.first, at: time)
-                frames.append(jointFrame)
-                if observation.bodyHeight > 0 { heights.append(Float(observation.bodyHeight)) }
-                if let depthData, let focal = depthReader?.focalLengthPixels,
-                   let sample = measuredHeight(
-                       imagePoints: jointFrame.imagePoints,
-                       depthData: depthData,
-                       videoPixelHeight: CVPixelBufferGetHeight(pixelBuffer),
-                       focalPixels: Double(focal)
-                   ) {
-                    heightSamples.append(sample)
+                // Advance the depth stream to the record closest to this frame.
+                while let next = upcomingDepth, next.time <= time {
+                    previousDepth = next
+                    upcomingDepth = depthReader?.next()
                 }
+                var closestDepth = previousDepth
+                if let next = upcomingDepth,
+                   abs(next.time - time) < abs((closestDepth?.time ?? -.infinity) - time) {
+                    closestDepth = next
+                }
+                var depthData: AVDepthData? = closestDepth.flatMap {
+                    abs($0.time - time) <= depthTolerance ? $0.depthData : nil
+                }
+                // Depth is only sampled at joint image points, so its orientation
+                // must match the video frame. Sidecars recorded before the depth
+                // connection was rotated are landscape; skip depth for those.
+                if let depth = depthData {
+                    let map = depth.depthDataMap
+                    let depthPortrait = CVPixelBufferGetHeight(map) >= CVPixelBufferGetWidth(map)
+                    let videoPortrait = CVPixelBufferGetHeight(pixelBuffer) >= CVPixelBufferGetWidth(pixelBuffer)
+                    if depthPortrait != videoPortrait { depthData = nil }
+                }
+
+                // Depth is deliberately NOT handed to Vision. Sidecar depth has no
+                // camera calibration (the dictionary representation we persist
+                // drops it, and the rotated capture connection invalidates the
+                // intrinsics anyway), and VNDetectHumanBodyPose3DRequest's camera
+                // registration hard-aborts on such depth (C++ assert in
+                // AltruisticBodyPoseKit's PoseRefiner — not a catchable error).
+                // Instead LiDAR provides what it is actually good for here: the
+                // metric scale, measured directly off the depth map below.
+                let request = VNDetectHumanBodyPose3DRequest()
+                let request2D = VNDetectHumanBodyPoseRequest()
+                let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, orientation: .up)
+                try? handler.perform([request, request2D])
+                if let observation = request.results?.first {
+                    let jointFrame = frame(from: observation, pose2D: request2D.results?.first, at: time)
+                    frames.append(jointFrame)
+                    if observation.bodyHeight > 0 { heights.append(Float(observation.bodyHeight)) }
+                    if let depthData, let focal = depthReader?.focalLengthPixels,
+                       let sample = measuredHeight(
+                           imagePoints: jointFrame.imagePoints,
+                           depthData: depthData,
+                           videoPixelHeight: CVPixelBufferGetHeight(pixelBuffer),
+                           focalPixels: Double(focal)
+                       ) {
+                        heightSamples.append(sample)
+                    }
+                }
+                if windowDuration > 0 { progress?(min(max(time - windowStart, 0) / windowDuration, 1)) }
             }
-            if windowDuration > 0 { progress?(min(max(time - windowStart, 0) / windowDuration, 1)) }
+            if reader.status == .completed { break }
+
+            // The sample stream also ends when the decoder is torn down mid-file
+            // (app backgrounded, memory pressure) — returning what was read so
+            // far would silently cut the set short and analyze a fraction of the
+            // reps (seen on device 2026-07-09: 22.5 s of a 40.5 s bench set,
+            // 1 rep of 8). Resume from the last analyzed frame; give up only
+            // when repeated attempts make no progress.
+            if lastAnalyzedTime > resumeProgressMark {
+                resumeProgressMark = lastAnalyzedTime
+                resumesWithoutProgress = 0
+            }
+            resumesWithoutProgress += 1
+            guard resumesWithoutProgress <= Self.maxReaderResumes else {
+                throw reader.error ?? PoseExtractionError.readerFailed
+            }
+            try await Task.sleep(for: .milliseconds(600))
+            reader.cancelReading()
+            // A failed re-creation (still backgrounded) burns an attempt and
+            // loops; the cancelled reader yields no samples and lands back here.
+            if let resumed = try? makeReader(from: max(lastAnalyzedTime, windowStart)) {
+                (reader, output) = resumed
+            }
         }
 
         // Vision's RGB-only bodyHeight is only a prior (~1.80 for any adult);
@@ -144,6 +176,9 @@ enum PoseExtractor {
         )
     }
 
+    /// Consecutive reader re-creations without a new frame before extraction
+    /// gives up and surfaces the failure.
+    private static let maxReaderResumes = 4
     /// Sample count below which the depth-based height is considered noise.
     private static let minimumHeightSamples = 5
     /// LiDAR measures the near torso surface; the skeleton's vertical plane

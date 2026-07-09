@@ -48,7 +48,7 @@ enum RepSegmenter {
             // The wrist–shoulder distance only spans lockout → chest touch
             // (~60–100% of arm length on a clean skeleton), so thresholds
             // are normalized to the observed press range instead.
-            let floor = percentile(of: signal, 0.1)
+            let floor = touchFloor(of: signal)
             let range = baseline - floor
             guard range >= baseline * AnalysisTuning.benchMinimumRangeFraction else { return [] }
             entry = floor + range * AnalysisTuning.benchEntryRangeFraction
@@ -111,6 +111,12 @@ enum RepSegmenter {
     /// both the descent phases and occasional tracking spikes.
     static func standingBaseline(of signal: [Double]) -> Double {
         percentile(of: signal, 0.9)
+    }
+
+    /// Touch floor for range-normalized signals (bench): 10th percentile ≈
+    /// the bar at the chest, robust to compressed-skeleton noise below it.
+    static func touchFloor(of signal: [Double]) -> Double {
+        percentile(of: signal, 0.1)
     }
 
     private static func percentile(of signal: [Double], _ fraction: Double) -> Double {

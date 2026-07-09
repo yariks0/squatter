@@ -99,6 +99,10 @@ struct CoachSectionView: View {
                 Text(report.priorityFix.why)
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                if let topic = report.priorityFix.hintTopic {
+                    FormHintView(topic: topic)
+                        .padding(.top, 4)
+                }
             }
             .padding(12)
             .frame(maxWidth: .infinity, alignment: .leading)

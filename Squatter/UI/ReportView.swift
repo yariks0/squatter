@@ -176,6 +176,10 @@ struct FindingRow: View {
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
+                if let topic = finding.topic {
+                    FormHintView(topic: topic)
+                        .padding(.top, 6)
+                }
             }
         }
         .padding(14)

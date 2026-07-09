@@ -11,6 +11,11 @@ struct CoachReport: Codable, Sendable {
         var cue: String
         /// Why this fix comes first.
         var why: String
+        /// Raw diagram-topic tag from the model ("none" when nothing fits);
+        /// optional so reports saved before form hints still decode.
+        var topic: String?
+
+        var hintTopic: FormHintTopic? { topic.flatMap(FormHintTopic.init(rawValue:)) }
     }
 
     struct CoachFinding: Codable, Sendable, Identifiable {
@@ -21,15 +26,21 @@ struct CoachReport: Codable, Sendable {
         var repNumbers: [Int]
         /// "low" | "medium" | "high" — how sure the model is from the evidence.
         var confidence: String
+        /// Raw diagram-topic tag from the model ("none" when nothing fits);
+        /// optional so reports saved before form hints still decode.
+        var topic: String?
 
         enum CodingKeys: String, CodingKey {
-            case severity, title, detail, confidence
+            case severity, title, detail, confidence, topic
             case repNumbers = "rep_numbers"
         }
 
         /// Bridge to the rules-engine type so the report UI renders both alike.
         var asFinding: Finding {
-            Finding(severity: severity, title: title, detail: detail, repNumbers: repNumbers)
+            Finding(
+                severity: severity, title: title, detail: detail, repNumbers: repNumbers,
+                topic: topic.flatMap(FormHintTopic.init(rawValue:))
+            )
         }
     }
 

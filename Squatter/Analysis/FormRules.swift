@@ -21,6 +21,9 @@ struct Finding: Codable, Sendable, Identifiable {
     var detail: String
     /// Rep numbers (1-based) the finding applies to; empty = whole set.
     var repNumbers: [Int]
+    /// Wrong-vs-right diagram shown with the finding; nil = no diagram.
+    /// Optional so analyses saved before form hints still decode.
+    var topic: FormHintTopic? = nil
 }
 
 /// Deterministic mapping from per-rep metrics to coaching findings.
@@ -47,7 +50,8 @@ enum FormRules {
             severity: .warning,
             title: "Tracking too unstable to judge form",
             detail: "The body couldn't be tracked reliably in this recording, so form feedback was skipped — any angle-based call would be noise, and the rep count may be off. " + framing,
-            repNumbers: []
+            repNumbers: [],
+            topic: .framing
         )
     }
 
@@ -57,7 +61,8 @@ enum FormRules {
                 severity: .info,
                 title: "No reps detected",
                 detail: "Make sure your whole body stays in frame for the full set, with the phone about 3 m away at a 45° front-side angle.",
-                repNumbers: []
+                repNumbers: [],
+                topic: .framing
             )]
         }
         var findings: [Finding] = []
@@ -83,7 +88,8 @@ enum FormRules {
                 severity: .info,
                 title: "No reps detected",
                 detail: "Make sure your whole body and the bar stay in frame for the full set — phone about 3 m away at bench height, at a 45° angle from the foot of the bench.",
-                repNumbers: []
+                repNumbers: [],
+                topic: .framing
             )]
         }
         var findings: [Finding] = []
@@ -123,7 +129,8 @@ enum FormRules {
                 severity: .info,
                 title: "Almost to the chest",
                 detail: "The bar stopped just short of the chest on \(repList(close)). Touch the lower chest lightly on every rep — a consistent touch point makes the press repeatable.",
-                repNumbers: close.map(\.repNumber)
+                repNumbers: close.map(\.repNumber),
+                topic: .benchTouch
             ))
         }
         if !high.isEmpty {
@@ -131,7 +138,8 @@ enum FormRules {
                 severity: high.count > reps.count / 2 ? .warning : .info,
                 title: "Cutting the rep high",
                 detail: "The bar turned around well above the chest on \(repList(high)). Lower until the bar touches the lower chest with the forearms vertical; if that position hurts, reduce the load, not the range.",
-                repNumbers: high.map(\.repNumber)
+                repNumbers: high.map(\.repNumber),
+                topic: .benchTouch
             ))
         }
         return findings
@@ -152,7 +160,8 @@ enum FormRules {
                 severity: .risk,
                 title: "Elbows flared to a T",
                 detail: "Upper arms near 90° from the torso at the touch on \(repList(risky)) — the classic shoulder-impingement position. Tuck the elbows to roughly 45–70° and touch lower on the chest.",
-                repNumbers: risky.map(\.repNumber)
+                repNumbers: risky.map(\.repNumber),
+                topic: .elbowFlare
             ))
         }
         if !flaring.isEmpty {
@@ -160,7 +169,8 @@ enum FormRules {
                 severity: .warning,
                 title: "Elbows drifting wide",
                 detail: "Elbow flare creeping up on \(repList(flaring)). Keep the upper arms about 45–70° from the torso at the touch — think “bend the bar” or “tuck to the lats” on the way down.",
-                repNumbers: flaring.map(\.repNumber)
+                repNumbers: flaring.map(\.repNumber),
+                topic: .elbowFlare
             ))
         }
         let pinned = reps.filter {
@@ -171,7 +181,8 @@ enum FormRules {
                 severity: pinned.count > reps.count / 2 ? .warning : .info,
                 title: "Elbows over-tucked",
                 detail: "Upper arms pinned inside ~40° of the torso on \(repList(pinned)). Over-tucking takes the chest out of the press and loads the front delts and wrists through a longer path. Let the elbows sit around 45–70° — an arrow, not a pencil.",
-                repNumbers: pinned.map(\.repNumber)
+                repNumbers: pinned.map(\.repNumber),
+                topic: .elbowFlare
             ))
         }
         return findings
@@ -186,7 +197,8 @@ enum FormRules {
             severity: .warning,
             title: "Forearms not vertical",
             detail: "The forearms tipped well off vertical at the touch on \(repList(tipping)) — force leaks sideways instead of driving the bar. That's usually a grip-width or touch-point mismatch: adjust hand spacing until the wrist stacks straight over the elbow when the bar meets the chest.",
-            repNumbers: tipping.map(\.repNumber)
+            repNumbers: tipping.map(\.repNumber),
+            topic: .forearmVertical
         )]
     }
 
@@ -201,7 +213,8 @@ enum FormRules {
             severity: .warning,
             title: "Bouncing off the chest",
             detail: "The bar rebounded straight off the chest on \(repList(bounced)). Touch-and-go is fine, but the touch should be a light tap off a controlled descent — sinking the bar and bouncing hides strength and beats up the ribcage.",
-            repNumbers: bounced.map(\.repNumber)
+            repNumbers: bounced.map(\.repNumber),
+            topic: .controlDescent
         )]
     }
 
@@ -214,7 +227,8 @@ enum FormRules {
             severity: .warning,
             title: "Not locking out",
             detail: "The elbows never reached full extension on \(repList(cut)). Finish every rep with the arms straight and the bar stacked over the shoulders before descending again.",
-            repNumbers: cut.map(\.repNumber)
+            repNumbers: cut.map(\.repNumber),
+            topic: .benchLockout
         )]
     }
 
@@ -231,7 +245,8 @@ enum FormRules {
                 severity: .warning,
                 title: "Pressing toward the feet",
                 detail: "The bar moved toward the belly instead of back over the shoulders on \(repList(backward)). Press up and slightly back — lockout belongs stacked over the shoulder joint.",
-                repNumbers: backward.map(\.repNumber)
+                repNumbers: backward.map(\.repNumber),
+                topic: .barPath
             ))
         }
         if !sweeping.isEmpty {
@@ -239,7 +254,8 @@ enum FormRules {
                 severity: .warning,
                 title: "Bar path sweeping long",
                 detail: "A very long horizontal sweep on \(repList(sweeping)). Some travel back over the shoulders is correct, but a big sweep wastes force — touch the lower chest and drive the bar up with only a slight backward drift.",
-                repNumbers: sweeping.map(\.repNumber)
+                repNumbers: sweeping.map(\.repNumber),
+                topic: .barPath
             ))
         }
         return findings
@@ -254,7 +270,8 @@ enum FormRules {
             severity: .warning,
             title: "Touch point wandering",
             detail: "The bar touched noticeably different spots across the set. Pick one lower-chest landmark and hit it on every rep — a consistent touch point is what makes the groove repeatable.",
-            repNumbers: []
+            repNumbers: [],
+            topic: .benchTouch
         )]
     }
 
@@ -301,7 +318,8 @@ enum FormRules {
                 severity: .info,
                 title: "Close to full depth",
                 detail: "You reached about parallel on \(repList(atParallel)). The standard is sitting fully down with the hip crease below the knee — if ankle mobility limits you, heel-elevated work gets you there over time.",
-                repNumbers: atParallel.map(\.repNumber)
+                repNumbers: atParallel.map(\.repNumber),
+                topic: .squatDepth
             ))
         }
         if !shallow.isEmpty {
@@ -309,7 +327,8 @@ enum FormRules {
                 severity: shallow.count > reps.count / 2 ? .warning : .info,
                 title: "Shallow depth",
                 detail: "Hips stayed above parallel on \(repList(shallow)). Aim to sit fully down between your legs with the torso upright; if mobility is the limit, elevate your heels and go only as deep as you can with a neutral back.",
-                repNumbers: shallow.map(\.repNumber)
+                repNumbers: shallow.map(\.repNumber),
+                topic: .squatDepth
             ))
         }
         return findings
@@ -327,7 +346,8 @@ enum FormRules {
                 severity: .risk,
                 title: "Knees caving in hard",
                 detail: "Strong knee valgus on \(repList(risky)). This loads the knee ligaments — stop the set when it appears. Cue: push the knees out over the toes (“spread the floor”), and consider lighter weight.",
-                repNumbers: risky.map(\.repNumber)
+                repNumbers: risky.map(\.repNumber),
+                topic: .kneeValgus
             ))
         }
         if !caving.isEmpty {
@@ -335,7 +355,8 @@ enum FormRules {
                 severity: .warning,
                 title: "Knees drifting inward",
                 detail: "Some knee valgus on \(repList(caving)), usually on the way up. Cue: screw your feet into the floor and drive the knees out as you stand.",
-                repNumbers: caving.map(\.repNumber)
+                repNumbers: caving.map(\.repNumber),
+                topic: .kneeValgus
             ))
         }
         return findings
@@ -353,7 +374,8 @@ enum FormRules {
                 severity: .risk,
                 title: "Torso folding forward",
                 detail: "Very strong forward lean on \(repList(risky)) — this shifts load to the lower back. Brace your core before descending and keep your chest up; if it persists, drop the weight.",
-                repNumbers: risky.map(\.repNumber)
+                repNumbers: risky.map(\.repNumber),
+                topic: .torsoLean
             ))
         }
         if !leaning.isEmpty {
@@ -361,7 +383,8 @@ enum FormRules {
                 severity: .warning,
                 title: "Excessive forward lean",
                 detail: "Noticeable forward lean at the bottom on \(repList(leaning)). The standard is a near-vertical torso: big breath into the belly, brace, elbows down, and let the knees travel forward over the toes instead of hinging at the hips. Limited ankle mobility also causes this — heel wedges or lifting shoes help.",
-                repNumbers: leaning.map(\.repNumber)
+                repNumbers: leaning.map(\.repNumber),
+                topic: .torsoLean
             ))
         }
         return findings
@@ -375,7 +398,8 @@ enum FormRules {
                 severity: .warning,
                 title: "Dropping too fast",
                 detail: "Free-fall descent on \(repList(rushed)). A rebound out of the bottom is good technique, but it has to come off a controlled 1–2 s descent — stay tight on the way down so the bounce comes from position, not from falling.",
-                repNumbers: rushed.map(\.repNumber)
+                repNumbers: rushed.map(\.repNumber),
+                topic: .controlDescent
             ))
         }
         let grinding = reps.filter { $0.concentricSeconds > AnalysisTuning.slowConcentricSeconds }
@@ -410,7 +434,8 @@ enum FormRules {
                 severity: narrow.count > reps.count / 2 ? .warning : .info,
                 title: "Stance too narrow",
                 detail: "Your feet were inside hip width on \(repList(narrow)). Set the heels about shoulder-width apart with the toes turned out ~30° so the hips have room to sit down between the legs.",
-                repNumbers: narrow.map(\.repNumber)
+                repNumbers: narrow.map(\.repNumber),
+                topic: .stanceWidth
             ))
         }
         if !wide.isEmpty {
@@ -418,7 +443,8 @@ enum FormRules {
                 severity: wide.count > reps.count / 2 ? .warning : .info,
                 title: "Stance very wide",
                 detail: "Your feet were well outside shoulder width on \(repList(wide)). The high-bar standard is heels around shoulder width — a wide stance turns the squat into a hip hinge and limits upright depth.",
-                repNumbers: wide.map(\.repNumber)
+                repNumbers: wide.map(\.repNumber),
+                topic: .stanceWidth
             ))
         }
         return findings
@@ -444,7 +470,8 @@ enum FormRules {
             severity: .warning,
             title: "Not standing up fully",
             detail: "You started the next descent before reaching lockout on \(repList(cut)). Finish every rep standing tall — knees and hips fully extended, one breath — before going down again; cutting the top shortens the rep and hides fatigue.",
-            repNumbers: cut.map(\.repNumber)
+            repNumbers: cut.map(\.repNumber),
+            topic: .squatLockout
         )]
     }
 

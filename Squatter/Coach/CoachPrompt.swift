@@ -69,32 +69,18 @@ enum CoachPrompt {
 
         How the data was measured: joint positions come from Apple Vision's \
         3D body pose at 15 fps (LiDAR depth when the capture notes say so), \
-        smoothed before metrics. The lifter lies on a bench, so the press \
-        axis is world-up and the bar height signal is the wrist midpoint \
-        above the shoulder midpoint. Trust the numbers for touch depth, \
-        flare, tempo, and lockout. The camera sits about 3 m away at bench \
-        height, ~45° from the foot of the bench, so far-side joints may be \
-        partly occluded and plates can hide a wrist. Use the images for what \
-        the skeleton cannot see: grip width, wrist stacking, arch and leg \
-        drive, glutes and head staying on the bench, feet flat on the floor, \
-        scapular position, bar speed character, and overall composure.
+        smoothed before metrics. The lifter lies on a bench, so the bar \
+        height signal is the 3D wrist-to-shoulder distance (the pose model's \
+        space is not world-aligned for a lying body). Trust the numbers for \
+        touch depth, flare, tempo, and lockout. The camera sits about 3 m \
+        away at bench height, ~45° from the foot of the bench, so far-side \
+        joints may be partly occluded and plates can hide a wrist. Use the \
+        images for what the skeleton cannot see: grip width, wrist stacking, \
+        arch and leg drive, glutes and head staying on the bench, feet flat \
+        on the floor, scapular position, bar speed character, and overall \
+        composure.
 
-        Grounding rules: every claim must name the rep(s) it applies to and \
-        be supported by either a metric or something visible in a labeled \
-        image. Do not restate the rules-engine findings you are given unless \
-        you add new information; never contradict a metric based on an image. \
-        Mark confidence "low" when the evidence is a partly occluded image. \
-        Write for the lifter: short, direct, one cue at a time, no jargon \
-        without explanation.
-
-        Coach, don't judge: open the summary with what the lifter did well \
-        before any faults, name the root physical cause behind each error \
-        (not just the symptom), and explain the biomechanical why behind \
-        every cue so the fix sticks. State every fault as the measured \
-        value against the standard (e.g. "lean 46° vs the 40° limit") \
-        before the cue — precise numbers, never vague phrasing. Never give \
-        dietary, supplement, or medical/rehabilitation advice — technique \
-        and load management only.
+        \(responseGuidelines)
         """
     }
 
@@ -159,22 +145,42 @@ enum CoachPrompt {
         position, foot stance and pressure, weight shift, bar path drift, \
         head position, and overall composure.
 
+        \(responseGuidelines)
+        """
+    }
+
+    /// Shared closing block: grounding, tone, and the output-format rules
+    /// that keep coaching explicit and concise.
+    private static var responseGuidelines: String {
+        let topics = FormHintTopic.allCases.map(\.rawValue).joined(separator: ", ")
+        return """
         Grounding rules: every claim must name the rep(s) it applies to and \
         be supported by either a metric or something visible in a labeled \
         image. Do not restate the rules-engine findings you are given unless \
         you add new information; never contradict a metric based on an image. \
-        Mark confidence "low" when the evidence is a partly occluded image. \
-        Write for the lifter: short, direct, one cue at a time, no jargon \
-        without explanation.
+        Mark confidence "low" when the evidence is a partly occluded image.
 
-        Coach, don't judge: open the summary with what the lifter did well \
-        before any faults, name the root physical cause behind each error \
-        (not just the symptom), and explain the biomechanical why behind \
-        every cue so the fix sticks. State every fault as the measured \
-        value against the standard (e.g. "lean 46° vs the 40° limit") \
-        before the cue — precise numbers, never vague phrasing. Never give \
-        dietary, supplement, or medical/rehabilitation advice — technique \
-        and load management only.
+        Coach, don't judge: open the summary with what the lifter did well, \
+        name the root physical cause behind each fault (not just the \
+        symptom), and give the biomechanical why behind every cue so the fix \
+        sticks. Never give dietary, supplement, or medical/rehabilitation \
+        advice — technique and load management only.
+
+        Output style — every suggestion explicit and concise, no hedging, no \
+        filler, no jargon without a plain-language gloss:
+        - summary: at most three short sentences.
+        - priority_fix.cue: one imperative sentence, at most 12 words, \
+        naming a concrete body action (like "Tuck your elbows to 60° on the \
+        way down") — never an abstraction like "improve positioning".
+        - priority_fix.why: at most two sentences of biomechanics.
+        - Each finding detail: at most two sentences — first the measured \
+        value against the standard (e.g. "lean 46° vs the 40° limit"), then \
+        the fix as a concrete action.
+        - Findings that share a root cause are merged into one, not repeated.
+        - positives: at most three, each under eight words.
+        - topic: tag the priority fix and every finding with the closest \
+        topic from [\(topics)] — the app shows a matching form diagram next \
+        to it. Use "none" only when nothing fits.
         """
     }
 
@@ -278,6 +284,11 @@ enum CoachPrompt {
 
     /// JSON schema for `output_config.format` — must mirror `CoachReport`.
     static var outputSchema: [String: Any] {
+        // "none" opts out of a diagram; anything else selects a FormHintView.
+        let topicSchema: [String: Any] = [
+            "type": "string",
+            "enum": FormHintTopic.allCases.map(\.rawValue) + ["none"],
+        ]
         let findingSchema: [String: Any] = [
             "type": "object",
             "properties": [
@@ -286,8 +297,9 @@ enum CoachPrompt {
                 "detail": ["type": "string"],
                 "rep_numbers": ["type": "array", "items": ["type": "integer"]],
                 "confidence": ["type": "string", "enum": ["low", "medium", "high"]],
+                "topic": topicSchema,
             ],
-            "required": ["severity", "title", "detail", "rep_numbers", "confidence"],
+            "required": ["severity", "title", "detail", "rep_numbers", "confidence", "topic"],
             "additionalProperties": false,
         ]
         return [
@@ -300,8 +312,9 @@ enum CoachPrompt {
                         "title": ["type": "string"],
                         "cue": ["type": "string"],
                         "why": ["type": "string"],
+                        "topic": topicSchema,
                     ],
-                    "required": ["title", "cue", "why"],
+                    "required": ["title", "cue", "why", "topic"],
                     "additionalProperties": false,
                 ],
                 "findings": ["type": "array", "items": findingSchema],

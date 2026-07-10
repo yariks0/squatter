@@ -33,6 +33,7 @@ enum FormRules {
         switch activity {
         case .squat: squatFindings(for: reps)
         case .benchPress: benchFindings(for: reps)
+        case .deadlift: deadliftFindings(for: reps)
         }
     }
 
@@ -45,6 +46,8 @@ enum FormRules {
             "Film from about 3 m at a 45° front-side angle with your whole body in frame."
         case .benchPress:
             "Film from about 3 m with your whole body — head to feet — in frame; a raised phone angled down at the bench keeps the head and hips visible."
+        case .deadlift:
+            "Film from about 3 m at a 45° front-side angle with your whole body and the bar in frame, including the plates on the floor."
         }
         return Finding(
             severity: .warning,
@@ -77,6 +80,7 @@ enum FormRules {
         findings.append(contentsOf: bottomStabilityFindings(reps))
         findings.append(contentsOf: lockoutFindings(reps))
         findings.append(contentsOf: fatigueFindings(reps))
+        findings.append(contentsOf: velocityFindings(reps))
         return findings.sorted { $0.severity > $1.severity }
     }
 
@@ -105,7 +109,156 @@ enum FormRules {
         findings.append(contentsOf: tempoFindings(reps))
         findings.append(contentsOf: benchAsymmetryFindings(reps))
         findings.append(contentsOf: fatigueFindings(reps))
+        findings.append(contentsOf: velocityFindings(reps))
         return findings.sorted { $0.severity > $1.severity }
+    }
+
+    /// Deadlift standards: neutral spine throughout (the injury line), bar
+    /// dragged up the legs, hips and shoulders leaving the floor together,
+    /// full tall lockout, plates settled between reps.
+    private static func deadliftFindings(for reps: [RepMetrics]) -> [Finding] {
+        guard !reps.isEmpty else {
+            return [Finding(
+                severity: .info,
+                title: "No reps detected",
+                detail: "Make sure your whole body and the bar stay in frame for the full set — phone about 3 m away at a 45° front-side angle, plates visible on the floor.",
+                repNumbers: [],
+                topic: .framing
+            )]
+        }
+        var findings: [Finding] = []
+        findings.append(contentsOf: spineFindings(reps))
+        findings.append(contentsOf: barGapFindings(reps))
+        findings.append(contentsOf: hipShootFindings(reps))
+        findings.append(contentsOf: deadliftLockoutFindings(reps))
+        findings.append(contentsOf: deadliftBounceFindings(reps))
+        // The first pull starts on the floor (no eccentric); keep it out of
+        // the shared tempo rules so a zero-length "descent" doesn't flag.
+        findings.append(contentsOf: tempoFindings(reps.filter { $0.eccentricSeconds > 0.05 }))
+        findings.append(contentsOf: asymmetryFindings(reps))
+        findings.append(contentsOf: velocityFindings(reps))
+        return findings.sorted { $0.severity > $1.severity }
+    }
+
+    /// Rounding under load is THE deadlift injury mechanism — flexed lumbar
+    /// tissue takes the shear the erectors should carry.
+    private static func spineFindings(_ reps: [RepMetrics]) -> [Finding] {
+        let risky = reps.filter {
+            ($0.spineFlexionDegrees ?? 180) < AnalysisTuning.deadliftSpineFlexionRiskDegrees
+        }
+        let rounding = reps.filter {
+            let spine = $0.spineFlexionDegrees ?? 180
+            return spine < AnalysisTuning.deadliftSpineFlexionWarningDegrees
+                && spine >= AnalysisTuning.deadliftSpineFlexionRiskDegrees
+        }
+        var findings: [Finding] = []
+        if !risky.isEmpty {
+            findings.append(Finding(
+                severity: .risk,
+                title: "Back rounding under load",
+                detail: "The spine visibly flexed mid-pull on \(repList(risky)) — the classic deadlift injury pattern, loading the discs in their weakest position. Stop the set when this appears: reset with a big breath into the belt line, chest proud, hips wedged down, and take weight off the bar until the line holds.",
+                repNumbers: risky.map(\.repNumber),
+                topic: .neutralSpine
+            ))
+        }
+        if !rounding.isEmpty {
+            findings.append(Finding(
+                severity: .warning,
+                title: "Back losing its line",
+                detail: "The upper back started rounding on \(repList(rounding)). Set the lats before the bar leaves the floor — “bend the bar around your shins”, chest proud — and treat any rep the line won't hold as the last one.",
+                repNumbers: rounding.map(\.repNumber),
+                topic: .neutralSpine
+            ))
+        }
+        if risky.isEmpty, rounding.isEmpty, reps.contains(where: { $0.spineFlexionDegrees != nil }) {
+            findings.append(Finding(
+                severity: .info,
+                title: "Neutral spine held",
+                detail: "Your back kept its line on every rep — the single most important thing in a deadlift. Keep bracing exactly like this as the weight goes up.",
+                repNumbers: []
+            ))
+        }
+        return findings
+    }
+
+    private static func barGapFindings(_ reps: [RepMetrics]) -> [Finding] {
+        let drifting = reps.filter {
+            ($0.barGapRatio ?? 0) > AnalysisTuning.deadliftBarGapWarningRatio
+        }
+        guard !drifting.isEmpty else { return [] }
+        return [Finding(
+            severity: .warning,
+            title: "Bar drifting off your legs",
+            detail: "The bar swung away from your legs on \(repList(drifting)) — every centimeter of gap is a moment arm your lower back has to hold. Drag the bar up the thighs: lats tight (“protect your armpits”), shoulders over the bar at the start, and let it graze the skin.",
+            repNumbers: drifting.map(\.repNumber),
+            topic: .barClose
+        )]
+    }
+
+    private static func hipShootFindings(_ reps: [RepMetrics]) -> [Finding] {
+        let shooting = reps.filter {
+            ($0.hipShootRatio ?? 1) >= AnalysisTuning.deadliftHipShootRatio
+        }
+        guard !shooting.isEmpty else { return [] }
+        return [Finding(
+            severity: .warning,
+            title: "Hips shooting up first",
+            detail: "Off the floor your hips rose much faster than your shoulders on \(repList(shooting)) — the pull turns into a stiff-leg lift and the back takes the whole load. Cue “push the floor away”: chest and hips rise together until the bar passes the knees.",
+            repNumbers: shooting.map(\.repNumber),
+            topic: .hipsRiseEarly
+        )]
+    }
+
+    private static func deadliftLockoutFindings(_ reps: [RepMetrics]) -> [Finding] {
+        let soft = reps.filter {
+            ($0.lockoutKneeDegrees ?? 180) < AnalysisTuning.deadliftLockoutKneeDegrees
+        }
+        guard !soft.isEmpty else { return [] }
+        return [Finding(
+            severity: .warning,
+            title: "Soft lockout",
+            detail: "The pull stopped short of standing tall on \(repList(soft)). Finish every rep with the hips through and knees straight — squeeze the glutes, no lean-back — before lowering.",
+            repNumbers: soft.map(\.repNumber),
+            topic: .squatLockout
+        )]
+    }
+
+    private static func deadliftBounceFindings(_ reps: [RepMetrics]) -> [Finding] {
+        // The first pull starts from a dead stop by definition.
+        let bounced = reps.dropFirst().filter {
+            ($0.touchPauseSeconds ?? 1) < AnalysisTuning.deadliftBouncePauseSeconds
+        }
+        guard bounced.count > reps.count / 3 else { return [] }
+        return [Finding(
+            severity: .warning,
+            title: "Bouncing off the floor",
+            detail: "The plates rebounded straight off the floor on \(repList(Array(bounced))). A bounce feeds momentum and catches the back before it's re-braced — let the bar settle, reset the breath and lats, then pull.",
+            repNumbers: bounced.map(\.repNumber),
+            topic: .controlDescent
+        )]
+    }
+
+    /// Velocity-loss autoregulation (LiDAR captures only): once the bar
+    /// moves 20% slower than the set's best rep, extra reps add fatigue
+    /// faster than strength — the standard VBT "rack it" signal.
+    private static func velocityFindings(_ reps: [RepMetrics]) -> [Finding] {
+        let velocities = reps.compactMap { rep in
+            rep.meanConcentricVelocity.map { (number: rep.repNumber, mcv: $0) }
+        }
+        guard velocities.count >= 3, let last = velocities.last,
+              let best = velocities.map(\.mcv).max(), best > 0 else { return [] }
+        let loss = (best - last.mcv) / best
+        guard loss >= AnalysisTuning.velocityLossWarningFraction else { return [] }
+        return [Finding(
+            severity: .info,
+            title: "Bar speed dropping",
+            detail: String(
+                format: "Rep %d moved %.0f%% slower than your fastest rep (%.2f vs %.2f m/s). Past %.0f%% velocity loss, extra reps mostly add fatigue — a good place to rack it.",
+                last.number, loss * 100, last.mcv, best,
+                AnalysisTuning.velocityLossWarningFraction * 100
+            ),
+            repNumbers: [last.number]
+        )]
     }
 
     private static func benchTouchFindings(_ reps: [RepMetrics]) -> [Finding] {

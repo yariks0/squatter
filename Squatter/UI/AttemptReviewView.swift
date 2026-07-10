@@ -15,6 +15,7 @@ struct AttemptReviewView: View {
     @State private var trimStart: TimeInterval = 0
     @State private var trimEnd: TimeInterval = 0
     @State private var activity: ActivityType
+    @State private var weightText = ""
 
     /// Shortest analyzable window — roughly one slow rep.
     private static let minimumWindow: TimeInterval = 2
@@ -61,13 +62,19 @@ struct AttemptReviewView: View {
                 selection: $activity
             )
 
+            weightField
+
             Button {
+                if let weight = enteredWeightKg {
+                    UserDefaults.standard.set(weight, forKey: Self.lastWeightKey(for: activity))
+                }
                 onAnalyze(RecordingResult(
                     videoURL: videoURL,
                     depthSidecarURL: depthSidecarURL,
                     duration: duration,
                     usedLiDAR: depthSidecarURL != nil,
-                    analysisRange: selectedRange
+                    analysisRange: selectedRange,
+                    weightKg: enteredWeightKg
                 ), activity)
             } label: {
                 Label(analyzeTitle, systemImage: "waveform.path.ecg")
@@ -80,9 +87,42 @@ struct AttemptReviewView: View {
         .task {
             duration = (try? await AVURLAsset(url: videoURL).load(.duration).seconds) ?? 0
             trimEnd = duration
+            prefillWeight()
             player.play()
         }
+        .onChange(of: activity) { prefillWeight() }
         .onDisappear { player.pause() }
+    }
+
+    /// Load on the bar: optional, but it feeds the load–velocity profile
+    /// and 1RM estimate, so the last-used weight per lift is prefilled.
+    private var weightField: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "scalemass")
+                .foregroundStyle(.secondary)
+            TextField("Weight on the bar", text: $weightText)
+                .keyboardType(.decimalPad)
+            Text("kg")
+                .foregroundStyle(.secondary)
+        }
+        .font(.subheadline)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 12))
+    }
+
+    private var enteredWeightKg: Double? {
+        let weight = Double(weightText.replacingOccurrences(of: ",", with: "."))
+        return weight.flatMap { $0 > 0 ? $0 : nil }
+    }
+
+    private static func lastWeightKey(for activity: ActivityType) -> String {
+        "lastWeightKg.\(activity.rawValue)"
+    }
+
+    private func prefillWeight() {
+        let stored = UserDefaults.standard.double(forKey: Self.lastWeightKey(for: activity))
+        weightText = stored > 0 ? String(format: "%g", stored) : ""
     }
 
     private var trimSection: some View {

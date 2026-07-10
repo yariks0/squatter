@@ -138,6 +138,61 @@ enum AnalysisTuning {
     /// long enough to survive a slow rep, short enough to track drift.
     static let liveBaselineWindowSeconds: TimeInterval = 10
 
+    // MARK: Bar velocity (from the wrist image trajectory × LiDAR metric
+    // scale; MCV = mean concentric velocity, the headline VBT number).
+    /// Last-rep MCV this far below the set's best rep is the standard
+    /// velocity-loss autoregulation cut — the "rack it" signal.
+    static let velocityLossWarningFraction = 0.2
+    /// Minimal velocity thresholds (m/s): the MCV of a true limit attempt,
+    /// where the load–velocity line crosses into a miss. Literature-standard
+    /// first-pass values per lift.
+    static let squatMinimalVelocity = 0.30
+    static let benchMinimalVelocity = 0.15
+    static let deadliftMinimalVelocity = 0.25
+
+    // MARK: - Deadlift
+    // Standards: neutral spine throughout (the injury line), bar dragged up
+    // the legs over the midfoot, hips and shoulders rising together off the
+    // floor, full tall lockout, no bouncing the plates. First-pass values
+    // to be tuned against real recordings.
+
+    // Rep segmentation rides the range-normalized bench thresholds on the
+    // wrist–ankle distance signal, with deadlift-specific timing: the set
+    // starts with the bar on the floor, so windows are judged on their
+    // ascent and the folded-in floor time is capped.
+    /// Shortest plausible pull, floor to lockout.
+    static let deadliftMinimumAscentSeconds: TimeInterval = 0.4
+    /// Longest eccentric-plus-floor-dwell folded into one rep; anything
+    /// earlier is setup, not the rep.
+    static let deadliftMaxEccentricSeconds: TimeInterval = 6.0
+
+    // Spine flexion: the angle at the spine joint between the root→spine
+    // and spine→shoulder segments (180° = a straight line). Rounding under
+    // load is THE deadlift injury mechanism — flexed lumbar tissue carries
+    // shear the erectors should carry.
+    /// Below this at any point of the pull the back is visibly rounding.
+    static let deadliftSpineFlexionWarningDegrees = 155.0
+    /// Below this the spine is clearly flexed under load — stop the set.
+    static let deadliftSpineFlexionRiskDegrees = 140.0
+
+    /// Peak horizontal wrist-to-ankle-midpoint offset during the pull, as a
+    /// fraction of hip width. Bar drifting off the legs multiplies the
+    /// lumbar moment arm — efficiency and injury in one number.
+    static let deadliftBarGapWarningRatio = 0.8
+
+    /// Hip rise ÷ shoulder rise over the first third of the ascent. Hips
+    /// shooting up first turns the pull into a stiff-leg lift and dumps the
+    /// load onto the lower back.
+    static let deadliftHipShootRatio = 1.8
+
+    /// Average knee extension at lockout (180 = straight); below this the
+    /// pull stopped short of standing tall.
+    static let deadliftLockoutKneeDegrees = 160.0
+
+    /// Bottom dwell below which consecutive reps bounce off the plates
+    /// instead of resetting — momentum, not strength, and a flexed catch.
+    static let deadliftBouncePauseSeconds = 0.2
+
     // MARK: Tracking quality gate
     /// Median relative bone-length jitter (see `TrackingQuality`) above which
     /// joint angles cannot be trusted: form rules are replaced by a single

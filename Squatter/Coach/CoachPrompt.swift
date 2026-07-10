@@ -15,7 +15,63 @@ enum CoachPrompt {
         switch activity {
         case .squat: squatSystemPrompt()
         case .benchPress: benchSystemPrompt()
+        case .deadlift: deadliftSystemPrompt()
         }
+    }
+
+    private static func deadliftSystemPrompt() -> String {
+        """
+        You are a national-team-level barbell coach. You judge conventional \
+        deadlifts against strength-coaching consensus standards, in priority \
+        order:
+
+        - Neutral spine is the standard that outranks every other: rounding \
+        under load is the deadlift injury mechanism. The metric is the \
+        spine-joint angle (root→spine→shoulders; 180° = a straight line) at \
+        its worst point of each rep: below \
+        \(Int(AnalysisTuning.deadliftSpineFlexionWarningDegrees))° the back \
+        is losing its line, below \
+        \(Int(AnalysisTuning.deadliftSpineFlexionRiskDegrees))° the set \
+        should stop. A high but *held* hinge is fine — judge the line, not \
+        the lean.
+        - The bar stays against the legs over the midfoot. The bar-gap \
+        metric is the peak horizontal wrist offset from the ankle midpoint \
+        in hip widths; above \(AnalysisTuning.deadliftBarGapWarningRatio) \
+        the bar has swung away and the lower back holds the moment arm.
+        - Hips and shoulders leave the floor together. The metric is hip \
+        rise over shoulder rise across the first third of the pull; at \
+        \(AnalysisTuning.deadliftHipShootRatio) or above the hips shot up, \
+        the knees straightened early, and the pull became a stiff-leg lift.
+        - Full lockout: hips through, knees straight (top-of-rep knee angle \
+        under \(Int(AnalysisTuning.deadliftLockoutKneeDegrees))° is a soft \
+        lockout), no lean-back hyperextension.
+        - Reps reset from a dead stop, or at least a settled touch: a floor \
+        dwell under \(AnalysisTuning.deadliftBouncePauseSeconds) s is a \
+        bounce — momentum the lifter didn't pull, caught with a back that \
+        never re-braced.
+        - The lowering is controlled (hinge back, bar on the legs), and bar \
+        speed is load-management context: an ascent slower than \
+        \(AnalysisTuning.slowConcentricSeconds) s is a grind.
+        - When per-rep MCV (mean concentric velocity, from LiDAR) is \
+        present, use it for autoregulation: velocity loss beyond \
+        \(Int(AnalysisTuning.velocityLossWarningFraction * 100))% versus \
+        the set's best rep means the set should end, and an MCV approaching \
+        \(AnalysisTuning.deadliftMinimalVelocity) m/s means the load is \
+        near-limit for the day.
+
+        How the data was measured: joint positions come from Apple Vision's \
+        3D body pose at 15 fps (LiDAR depth when the capture notes say so), \
+        smoothed before metrics; the bar height signal is the 3D \
+        wrist-to-ankle distance. Trust the numbers for spine line, bar gap, \
+        hip/shoulder timing, tempo, and lockout. The camera sits about 3 m \
+        away at a 45° front-side angle, so far-side joints may be partly \
+        occluded and plates can hide the shins. Use the images for what the \
+        skeleton cannot see: grip (double overhand vs mixed), bar over the \
+        midfoot at setup, shoulder position over the bar, slack pulled out \
+        before liftoff, neck position, and overall composure.
+
+        \(responseGuidelines)
+        """
     }
 
     private static func benchSystemPrompt() -> String {
@@ -66,6 +122,12 @@ enum CoachPrompt {
         slower than \(AnalysisTuning.slowConcentricSeconds) s is a grind — \
         normal for heavy strength work, a load-management flag for technique \
         sets.
+        - When per-rep MCV (mean concentric velocity, from LiDAR) is \
+        present, use it for autoregulation: velocity loss beyond \
+        \(Int(AnalysisTuning.velocityLossWarningFraction * 100))% versus \
+        the set's best rep means the set should end, and an MCV \
+        approaching \(AnalysisTuning.benchMinimalVelocity) m/s means the \
+        load is near-limit for the day.
 
         How the data was measured: joint positions come from Apple Vision's \
         3D body pose at 15 fps (LiDAR depth when the capture notes say so), \
@@ -113,6 +175,12 @@ enum CoachPrompt {
         than \(AnalysisTuning.slowConcentricSeconds) s is a grind. Grinding \
         is normal in dedicated heavy strength work; for technique-focused \
         sets it means the load is too heavy.
+        - When per-rep MCV (mean concentric velocity, from LiDAR) is \
+        present, use it for autoregulation: velocity loss beyond \
+        \(Int(AnalysisTuning.velocityLossWarningFraction * 100))% versus \
+        the set's best rep means the set should end, and an MCV \
+        approaching \(AnalysisTuning.squatMinimalVelocity) m/s means the \
+        load is near-limit for the day.
         - Elbows stay down under the bar, pointing at the floor — they pin \
         the bar to the back and keep the upper back tight; elbows swinging \
         up lets the bar roll and tips the chest. The metric is the \
@@ -254,6 +322,9 @@ enum CoachPrompt {
                 if let lift = rep.elbowLiftDegrees {
                     line += String(format: ", elbow lift %.0f°", lift)
                 }
+                if let velocity = rep.meanConcentricVelocity {
+                    line += String(format: ", MCV %.2f m/s", velocity)
+                }
                 lines.append(line)
             }
         case .benchPress:
@@ -280,6 +351,36 @@ enum CoachPrompt {
                 }
                 if let sticking = rep.stickingHeightFraction {
                     line += String(format: ", slowest at %.0f%% of ascent", sticking * 100)
+                }
+                if let velocity = rep.meanConcentricVelocity {
+                    line += String(format: ", MCV %.2f m/s", velocity)
+                }
+                lines.append(line)
+            }
+        case .deadlift:
+            lines.append("Per-rep metrics (spine 180° = straight line, smaller = rounding; bar gap and drift in hip widths):")
+            for rep in analysis.reps {
+                var line = String(
+                    format: "Rep %d: worst spine %.0f°, down %.1f s, up %.1f s, floor dwell %.2f s, L/R knee diff %.0f°",
+                    rep.repNumber, rep.spineFlexionDegrees ?? 180,
+                    rep.eccentricSeconds, rep.concentricSeconds,
+                    rep.touchPauseSeconds ?? 0, rep.asymmetryDegrees
+                )
+                if let gap = rep.barGapRatio {
+                    line += String(format: ", bar gap %.2f×hip width", gap)
+                }
+                if let shoot = rep.hipShootRatio {
+                    line += String(format: ", hip/shoulder rise %.1f×", shoot)
+                }
+                if let lockout = rep.lockoutKneeDegrees {
+                    line += String(format: ", top knee %.0f°", lockout)
+                }
+                line += String(format: ", finish lean %.0f°", rep.torsoLeanDegrees)
+                if let stance = rep.stanceWidthRatio {
+                    line += String(format: ", stance %.2f×shoulder width", stance)
+                }
+                if let velocity = rep.meanConcentricVelocity {
+                    line += String(format: ", MCV %.2f m/s", velocity)
                 }
                 lines.append(line)
             }

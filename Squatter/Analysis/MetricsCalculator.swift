@@ -43,6 +43,24 @@ struct RepMetrics: Codable, Sendable, Identifiable {
     /// a high-bar grip sits ~30–50°, lifted elbows swing past 70°.
     var elbowLiftDegrees: Double?
 
+    // MARK: Bar velocity (LiDAR captures only; see VelocityCalculator)
+    /// Mean concentric velocity, m/s — the headline VBT number.
+    var meanConcentricVelocity: Double?
+    /// Peak concentric velocity, m/s (approximate at 15 fps).
+    var peakConcentricVelocity: Double?
+
+    // MARK: Deadlift (optional so other lifts and old JSON decode)
+    /// Worst (minimum) spine-joint angle through the rep, degrees —
+    /// root→spine→shoulder-center; 180 = a straight line, smaller = the
+    /// back rounding under load.
+    var spineFlexionDegrees: Double?
+    /// Peak horizontal wrist offset from the ankle midpoint during the
+    /// ascent, in hip widths — the bar drifting off the legs.
+    var barGapRatio: Double?
+    /// Hip rise ÷ shoulder rise over the first third of the ascent;
+    /// well above 1 = the hips shooting up first.
+    var hipShootRatio: Double?
+
     // MARK: Bench press (optional so squat sessions and old JSON decode;
     // squat-only fields above carry neutral values on bench reps and are
     // never shown for them)
@@ -75,7 +93,8 @@ enum MetricsCalculator {
     ) -> [RepMetrics] {
         let signal = RepSegmenter.liftSignal(series, activity: activity)
         let baseline = RepSegmenter.standingBaseline(of: signal)
-        return reps.enumerated().map { offset, rep in
+        let velocities = VelocityCalculator.concentricVelocities(for: reps, in: series)
+        var results = reps.enumerated().map { offset, rep in
             // Lockout is judged on the best extension reached before the
             // next rep begins (or the series ends).
             let lockoutSearchEnd = offset + 1 < reps.count
@@ -91,8 +110,128 @@ enum MetricsCalculator {
                     for: rep, number: offset + 1, in: series, signal: signal,
                     lockoutHeight: baseline, lockoutSearchEnd: lockoutSearchEnd
                 )
+            case .deadlift:
+                deadliftMetrics(
+                    for: rep, number: offset + 1, in: series, signal: signal,
+                    lockoutHeight: baseline, lockoutSearchEnd: lockoutSearchEnd
+                )
             }
         }
+        for index in results.indices {
+            results[index].meanConcentricVelocity = velocities[index]?.mean
+            results[index].peakConcentricVelocity = velocities[index]?.peak
+        }
+        return results
+    }
+
+    // MARK: - Deadlift
+
+    private static func deadliftMetrics(
+        for rep: Rep,
+        number: Int,
+        in series: JointSeries,
+        signal: [Double],
+        lockoutHeight: Double,
+        lockoutSearchEnd: Int
+    ) -> RepMetrics {
+        let frames = series.frames
+        let bottom = frames[rep.bottomIndex]
+
+        let kneeLeft = jointAngle(bottom, .leftHip, .leftKnee, .leftAnkle)
+        let kneeRight = jointAngle(bottom, .rightHip, .rightKnee, .rightAnkle)
+        let kneeAngles = [kneeLeft, kneeRight].compactMap { $0 }
+
+        return RepMetrics(
+            repNumber: number,
+            startTime: rep.startTime,
+            endTime: rep.endTime,
+            eccentricSeconds: rep.bottomTime - rep.startTime,
+            concentricSeconds: rep.endTime - rep.bottomTime,
+            depthFraction: lockoutHeight > 0
+                ? (lockoutHeight - signal[rep.bottomIndex]) / lockoutHeight : 0,
+            kneeFlexionDegrees: kneeAngles.isEmpty
+                ? 180 : kneeAngles.reduce(0, +) / Double(kneeAngles.count),
+            hipBelowKneeDegrees: 0,
+            // Torso at the finish: standing tall reads near vertical, an
+            // unfinished hinge stays inclined.
+            torsoLeanDegrees: torsoLean(frames[rep.endIndex]) ?? 0,
+            kneeValgusRatio: maxValgus(frames: frames, from: rep.bottomIndex, to: rep.endIndex),
+            asymmetryDegrees: (kneeLeft != nil && kneeRight != nil)
+                ? abs(kneeLeft! - kneeRight!) : 0,
+            stanceWidthRatio: stanceWidth(bottom),
+            lockoutKneeDegrees: lockoutKnee(frames: frames, from: rep.endIndex, to: lockoutSearchEnd),
+            spineFlexionDegrees: worstSpineFlexion(frames: frames, from: rep.startIndex, to: rep.endIndex),
+            barGapRatio: maxBarGap(frames: frames, from: rep.bottomIndex, to: rep.endIndex),
+            hipShootRatio: hipShoot(frames: frames, rep: rep),
+            touchPauseSeconds: touchPause(
+                rep: rep, signal: signal, lockoutHeight: lockoutHeight, frames: frames
+            )
+        )
+    }
+
+    /// Minimum spine-joint angle (root→spine→shoulder center) over the rep:
+    /// the deepest the back rounded while loaded.
+    private static func worstSpineFlexion(frames: [JointFrame], from: Int, to: Int) -> Double? {
+        var worst: Double?
+        for index in from ... min(to, frames.count - 1) {
+            guard let angle = jointAngle(frames[index], .root, .spine, .centerShoulder)
+            else { continue }
+            worst = min(worst ?? .infinity, angle)
+        }
+        return worst
+    }
+
+    /// Peak horizontal wrist-midpoint offset from the ankle midpoint during
+    /// the ascent, in hip widths — how far the bar swung off the legs.
+    private static func maxBarGap(frames: [JointFrame], from: Int, to: Int) -> Double? {
+        var worst: Double?
+        for index in from ... min(to, frames.count - 1) {
+            let frame = frames[index]
+            let wrists = [frame.position(.leftWrist), frame.position(.rightWrist)].compactMap { $0 }
+            let ankles = [frame.position(.leftAnkle), frame.position(.rightAnkle)].compactMap { $0 }
+            guard !wrists.isEmpty, !ankles.isEmpty,
+                  let leftHip = frame.position(.leftHip),
+                  let rightHip = frame.position(.rightHip) else { continue }
+            let hipWidth = simd_length(leftHip - rightHip)
+            guard hipWidth > 1e-6 else { continue }
+            let wristMid = wrists.reduce(SIMD3<Float>.zero, +) / Float(wrists.count)
+            let ankleMid = ankles.reduce(SIMD3<Float>.zero, +) / Float(ankles.count)
+            var offset = wristMid - ankleMid
+            offset.y = 0
+            worst = max(worst ?? 0, Double(simd_length(offset) / hipWidth))
+        }
+        return worst
+    }
+
+    /// Hip rise over shoulder rise across the first third of the ascent,
+    /// both measured as ankle-relative distances (model space is
+    /// root-anchored, so absolute heights are unobservable). Hips shooting
+    /// up while the shoulders stay put reads well above 1.
+    private static func hipShoot(frames: [JointFrame], rep: Rep) -> Double? {
+        let third = rep.bottomIndex + max(2, (rep.endIndex - rep.bottomIndex) / 3)
+        guard third <= rep.endIndex, third < frames.count else { return nil }
+        func rises(_ joint: (JointFrame) -> SIMD3<Float>?) -> Double? {
+            guard let atBottom = distance(frames[rep.bottomIndex], joint),
+                  let atThird = distance(frames[third], joint) else { return nil }
+            return atThird - atBottom
+        }
+        func distance(_ frame: JointFrame, _ joint: (JointFrame) -> SIMD3<Float>?) -> Double? {
+            let ankles = [frame.position(.leftAnkle), frame.position(.rightAnkle)].compactMap { $0 }
+            guard !ankles.isEmpty, let point = joint(frame) else { return nil }
+            let ankleMid = ankles.reduce(SIMD3<Float>.zero, +) / Float(ankles.count)
+            return Double(simd_length(point - ankleMid))
+        }
+        func mid(_ a: BodyJoint, _ b: BodyJoint) -> (JointFrame) -> SIMD3<Float>? {
+            { frame in
+                let points = [frame.position(a), frame.position(b)].compactMap { $0 }
+                guard !points.isEmpty else { return nil }
+                return points.reduce(SIMD3<Float>.zero, +) / Float(points.count)
+            }
+        }
+        guard let hipRise = rises(mid(.leftHip, .rightHip)),
+              let shoulderRise = rises(mid(.leftShoulder, .rightShoulder)),
+              hipRise > 0.01 else { return nil }
+        return hipRise / max(shoulderRise, 0.01)
     }
 
     // MARK: - Bench press

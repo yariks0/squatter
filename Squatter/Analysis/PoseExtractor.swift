@@ -64,6 +64,8 @@ enum PoseExtractor {
         var frames: [JointFrame] = []
         var heights: [Float] = []
         var heightSamples: [Double] = []
+        var barTrack: [BarSample] = []
+        var lastScale: Double?
         var usedDepth = false
         var lastAnalyzedTime = -Double.infinity
         let minInterval = 1.0 / targetFrameRate - 1e-6
@@ -80,7 +82,16 @@ enum PoseExtractor {
                 guard let pixelBuffer = CMSampleBufferGetImageBuffer(sample) else { continue }
                 let presentationTime = CMSampleBufferGetPresentationTimeStamp(sample).seconds
                 let time = presentationTime - movieStart
-                guard time - lastAnalyzedTime >= minInterval else { continue }
+                guard time - lastAnalyzedTime >= minInterval else {
+                    // Frames the 3D pass skips still feed the bar track: the
+                    // 2D detector is cheap, and full-capture-rate wrists
+                    // double the temporal resolution of bar velocity.
+                    if time > (barTrack.last?.time ?? -.infinity),
+                       let wristY = detectedWristY(in: pixelBuffer) {
+                        barTrack.append(BarSample(time: time, y: wristY, scale: lastScale))
+                    }
+                    continue
+                }
                 lastAnalyzedTime = time
 
                 // Advance the depth stream to the record closest to this frame.
@@ -119,18 +130,44 @@ enum PoseExtractor {
                 let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, orientation: .up)
                 try? handler.perform([request, request2D])
                 if let observation = request.results?.first {
-                    let jointFrame = frame(from: observation, pose2D: request2D.results?.first, at: time)
+                    var jointFrame = frame(from: observation, pose2D: request2D.results?.first, at: time)
+                    if let depthData, let focal = depthReader?.focalLengthPixels, focal > 100,
+                       let depth = bodyDepth(imagePoints: jointFrame.imagePoints, depthData: depthData) {
+                        // The skeleton's vertical plane runs ~torsoSurfaceOffset
+                        // behind the LiDAR-visible surface; that plane also
+                        // sets the metric scale for bar velocity. A propped
+                        // phone tilts, compressing vertical image spans by
+                        // ~cos(pitch) — undone here when the sidecar carries
+                        // the recorded pitch (v3+).
+                        let plane = depth + torsoSurfaceOffset
+                        let pitchScale = depthReader?.cameraPitchRadians
+                            .map { 1.0 / max(0.5, cos(Double($0))) } ?? 1.0
+                        jointFrame.metersPerImageHeight = Float(
+                            pitchScale * plane * Double(CVPixelBufferGetHeight(pixelBuffer)) / Double(focal)
+                        )
+                        // Height samples only from a plausible filming
+                        // distance — the walk to the phone after the set
+                        // produces clipped, foreshortened frames that still
+                        // land inside the naive human-height band.
+                        if plane >= minimumHeightSampleDepth, plane < 8,
+                           let sample = measuredHeight(
+                               imagePoints: jointFrame.imagePoints,
+                               metersPerImageHeight: Double(jointFrame.metersPerImageHeight!)
+                           ) {
+                            heightSamples.append(sample)
+                        }
+                    }
+                    if let scale = jointFrame.metersPerImageHeight {
+                        lastScale = Double(scale)
+                    }
+                    let wrists = [jointFrame.imagePoints[.leftWrist], jointFrame.imagePoints[.rightWrist]]
+                        .compactMap { $0 }
+                    if !wrists.isEmpty, time > (barTrack.last?.time ?? -.infinity) {
+                        let wristY = wrists.reduce(0.0) { $0 + Double($1.y) } / Double(wrists.count)
+                        barTrack.append(BarSample(time: time, y: wristY, scale: lastScale))
+                    }
                     frames.append(jointFrame)
                     if observation.bodyHeight > 0 { heights.append(Float(observation.bodyHeight)) }
-                    if let depthData, let focal = depthReader?.focalLengthPixels,
-                       let sample = measuredHeight(
-                           imagePoints: jointFrame.imagePoints,
-                           depthData: depthData,
-                           videoPixelHeight: CVPixelBufferGetHeight(pixelBuffer),
-                           focalPixels: Double(focal)
-                       ) {
-                        heightSamples.append(sample)
-                    }
                 }
                 if windowDuration > 0 { progress?(min(max(time - windowStart, 0) / windowDuration, 1)) }
             }
@@ -162,18 +199,37 @@ enum PoseExtractor {
         // Vision's RGB-only bodyHeight is only a prior (~1.80 for any adult);
         // with LiDAR distance and the camera's focal length the height is
         // measured directly instead. Squatting shrinks the pixel span, so
-        // standing frames sit at the top of the sample distribution.
+        // standing frames fill the top of the sample distribution — the
+        // median of the top quartile reads them while staying robust to the
+        // handful of walking/turning outliers above.
         var bodyHeight = heights.isEmpty ? nil : heights.sorted()[heights.count / 2]
         if heightSamples.count >= minimumHeightSamples {
             let sorted = heightSamples.sorted()
-            bodyHeight = Float(sorted[min(sorted.count - 1, Int(Double(sorted.count) * 0.9))])
+            let topQuartile = Array(sorted[(sorted.count * 3) / 4 ..< sorted.count])
+            bodyHeight = Float(topQuartile[topQuartile.count / 2])
             usedDepth = true
         }
         return JointSeries(
             frames: frames,
             bodyHeight: bodyHeight,
-            usedDepth: usedDepth
+            usedDepth: usedDepth,
+            barTrack: barTrack.isEmpty ? nil : barTrack
         )
+    }
+
+    /// Confident wrist-midpoint image y from the 2D detector alone — the
+    /// full-rate bar-track path for frames the 3D pass skips.
+    private static func detectedWristY(in pixelBuffer: CVPixelBuffer) -> Double? {
+        let request = VNDetectHumanBodyPoseRequest()
+        let handler = VNImageRequestHandler(cvPixelBuffer: pixelBuffer, orientation: .up)
+        try? handler.perform([request])
+        guard let points = try? request.results?.first?.recognizedPoints(.all) else { return nil }
+        let wrists = [points[.leftWrist], points[.rightWrist]].compactMap { point -> Double? in
+            guard let point, point.confidence >= 0.3 else { return nil }
+            return Double(point.location.y)
+        }
+        guard !wrists.isEmpty else { return nil }
+        return wrists.reduce(0, +) / Double(wrists.count)
     }
 
     /// Consecutive reader re-creations without a new frame before extraction
@@ -186,31 +242,61 @@ enum PoseExtractor {
     private static let torsoSurfaceOffset = 0.13
     /// Ankle joints sit about this far above the floor.
     private static let ankleHeightOffset = 0.07
+    /// Body depth below which no height sample is taken: closer than any
+    /// plausible filming spot, i.e. the lifter walking to the phone.
+    private static let minimumHeightSampleDepth = 1.8
+    /// Torso depth readings spreading wider than this mean something (a
+    /// hand, the bar, a rack post) sits in front of part of the torso.
+    private static let maxTorsoDepthSpread = 0.4
+    /// How far past the nose the head-top estimate extends along the
+    /// neck→nose line, in fractions of that segment. First calibration
+    /// against the lifter's known 1.80 m on the 2026-07 squat recordings —
+    /// those lack recorded camera pitch, which moves sessions ±4%, so this
+    /// is provisional until pitch-carrying (sidecar v3) footage exists.
+    static let headTopExtensionFactor: Float = 0.75
 
-    /// Pinhole height measurement: the skeleton's vertical pixel span times
-    /// the LiDAR-measured distance, divided by the camera's focal length.
+    /// Median LiDAR depth across the torso joints — robust against a hand,
+    /// the bar, or a plate in front of any single point (the old
+    /// root-pixel-only read measured the lifter's hands, shrinking every
+    /// scale-dependent metric by several percent).
+    private static func bodyDepth(
+        imagePoints: [BodyJoint: SIMD2<Float>],
+        depthData: AVDepthData
+    ) -> Double? {
+        let torso: [BodyJoint] = [.root, .leftHip, .rightHip, .leftShoulder, .rightShoulder]
+        let readings = torso.compactMap { joint in
+            imagePoints[joint].flatMap { depthValue(depthData, x: Double($0.x), y: Double($0.y)) }
+        }
+        guard readings.count >= 3 else { return nil }
+        let sorted = readings.sorted()
+        guard sorted[sorted.count - 1] - sorted[0] <= maxTorsoDepthSpread else { return nil }
+        return sorted[sorted.count / 2]
+    }
+
+    /// Pinhole height measurement: the skeleton's vertical image span times
+    /// the metric scale of the lifter's depth plane.
     private static func measuredHeight(
         imagePoints: [BodyJoint: SIMD2<Float>],
-        depthData: AVDepthData,
-        videoPixelHeight: Int,
-        focalPixels: Double
+        metersPerImageHeight: Double
     ) -> Double? {
-        guard focalPixels > 100,
-              let top = imagePoints[.topHead],
+        guard let top = imagePoints[.topHead],
               let leftAnkle = imagePoints[.leftAnkle],
               let rightAnkle = imagePoints[.rightAnkle],
-              let root = imagePoints[.root],
-              let surface = depthValue(depthData, x: Double(root.x), y: Double(root.y))
+              let root = imagePoints[.root]
         else { return nil }
-        // Plausible camera→lifter distances only.
-        let distance = surface + torsoSurfaceOffset
-        guard distance > 0.5, distance < 8 else { return nil }
+        // The whole measurement chain must sit inside the frame: clipped
+        // ankles or a cropped head make the span a lie.
+        let margin: Float = 0.02
+        for point in [top, leftAnkle, rightAnkle, root] {
+            guard point.x > margin, point.x < 1 - margin,
+                  point.y > margin, point.y < 1 - margin else { return nil }
+        }
 
         // Vertical span only: the camera's 45° yaw foreshortens horizontal
         // extents but leaves vertical ones intact.
-        let span = Double(top.y - (leftAnkle.y + rightAnkle.y) / 2) * Double(videoPixelHeight)
+        let span = Double(top.y - (leftAnkle.y + rightAnkle.y) / 2)
         guard span > 0 else { return nil }
-        let height = span * distance / focalPixels + ankleHeightOffset
+        let height = span * metersPerImageHeight + ankleHeightOffset
         // Outside human range = depth hit the background or a foreground
         // object, or the lifter is bent over; standing frames win the
         // percentile anyway.
@@ -265,11 +351,12 @@ enum PoseExtractor {
             }
             if let root = detectedPoint(.root), let neck = detectedPoint(.neck) {
                 imagePoints[.spine] = (root + neck) / 2
-                // The 2D set has no head-top joint; extend past the nose so
-                // the drawn head segment still covers the head.
+                // The 2D set has no head-top joint; extend past the nose to
+                // the crown (factor calibrated against a known body height —
+                // it feeds the metric height measurement, not just drawing).
                 if let nose = detectedPoint(.nose) {
                     imagePoints[.centerHead] = nose
-                    imagePoints[.topHead] = nose + (nose - neck) * 0.6
+                    imagePoints[.topHead] = nose + (nose - neck) * Self.headTopExtensionFactor
                 }
             }
         }

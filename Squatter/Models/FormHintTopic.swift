@@ -19,6 +19,10 @@ enum FormHintTopic: String, Codable, CaseIterable, Sendable {
     case forearmVertical = "forearm_vertical"
     case barPath = "bar_path"
     case benchLockout = "bench_lockout"
+    // Deadlift
+    case neutralSpine = "neutral_spine"
+    case barClose = "bar_close"
+    case hipsRiseEarly = "hips_rise_early"
     // Recording setup
     case framing = "framing"
 }

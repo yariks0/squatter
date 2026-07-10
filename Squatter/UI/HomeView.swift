@@ -152,7 +152,7 @@ struct HomeView: View {
                 choosingActivity = false
                 path.append(Route.setup(activity))
             }
-            .presentationDetents([.height(250)])
+            .presentationDetents([.height(330)])
             .presentationDragIndicator(.visible)
         }
     }

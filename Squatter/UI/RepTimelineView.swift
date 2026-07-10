@@ -31,14 +31,15 @@ struct RepTimelineView: View {
             window: 5
         )
         let baseline = RepSegmenter.standingBaseline(of: signal)
-        // Bench tracking compresses the wrist–shoulder distance far below any
-        // real touch on bad frames, so scaling to the signal minimum squashes
-        // the actual presses into a sliver at the top. Use the segmenter's
-        // range normalization instead and let outliers clamp; the squat
-        // signal is clean enough that its minimum is the true deepest point.
+        // Distance-signal tracking (bench, deadlift) compresses far below
+        // any real bottom on bad frames, so scaling to the signal minimum
+        // squashes the actual reps into a sliver at the top. Use the
+        // segmenter's range normalization instead and let outliers clamp;
+        // the squat signal is clean enough that its minimum is the true
+        // deepest point.
         let floor = switch analysis.kind {
         case .squat: signal.min() ?? baseline
-        case .benchPress: RepSegmenter.touchFloor(of: signal)
+        case .benchPress, .deadlift: RepSegmenter.touchFloor(of: signal)
         }
         let maxDepth = baseline - floor
         if baseline > 0, maxDepth > 0 {
@@ -93,11 +94,12 @@ struct RepTimelineView: View {
     }
 
     private func summary(of rep: RepMetrics) -> String {
+        var line: String
         switch analysis.kind {
         case .squat:
             let depth = rep.hipBelowKneeDegrees >= AnalysisTuning.fullDepthDegrees ? "full depth"
                 : rep.hipBelowKneeDegrees >= AnalysisTuning.parallelToleranceDegrees ? "parallel" : "high"
-            return String(
+            line = String(
                 format: "%@ · lean %.0f° · %.1f s ↓ %.1f s ↑",
                 depth, rep.torsoLeanDegrees, rep.eccentricSeconds, rep.concentricSeconds
             )
@@ -105,11 +107,23 @@ struct RepTimelineView: View {
             let elbow = rep.elbowFlexionDegrees ?? 180
             let touch = elbow <= AnalysisTuning.benchFullTouchElbowDegrees ? "to the chest"
                 : elbow <= AnalysisTuning.benchShallowElbowDegrees ? "near chest" : "cut high"
-            return String(
+            line = String(
                 format: "%@ · flare %.0f° · %.1f s ↓ %.1f s ↑",
                 touch, rep.elbowFlareDegrees ?? 0, rep.eccentricSeconds, rep.concentricSeconds
             )
+        case .deadlift:
+            let spine = rep.spineFlexionDegrees ?? 180
+            let back = spine >= AnalysisTuning.deadliftSpineFlexionWarningDegrees ? "back neutral"
+                : spine >= AnalysisTuning.deadliftSpineFlexionRiskDegrees ? "back bending" : "back rounded"
+            line = String(
+                format: "%@ · spine %.0f° · %.1f s ↑",
+                back, spine, rep.concentricSeconds
+            )
         }
+        if let velocity = rep.meanConcentricVelocity {
+            line += String(format: " · %.2f m/s", velocity)
+        }
+        return line
     }
 
     private func timeString(_ interval: TimeInterval) -> String {
@@ -291,6 +305,20 @@ private struct TimelineGraph: View {
                 if elbow <= AnalysisTuning.benchFullTouchElbowDegrees {
                     .green
                 } else if elbow <= AnalysisTuning.benchShallowElbowDegrees {
+                    .orange
+                } else {
+                    .red
+                }
+            } else {
+                .gray
+            }
+        case .deadlift:
+            // The spine line carries the marker — the deadlift's one
+            // non-negotiable.
+            if let spine = rep.spineFlexionDegrees {
+                if spine >= AnalysisTuning.deadliftSpineFlexionWarningDegrees {
+                    .green
+                } else if spine >= AnalysisTuning.deadliftSpineFlexionRiskDegrees {
                     .orange
                 } else {
                     .red

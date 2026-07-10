@@ -1,5 +1,6 @@
 import AVFoundation
 import CoreMedia
+import CoreMotion
 import simd
 
 struct RecordingResult: Sendable, Hashable {
@@ -9,19 +10,23 @@ struct RecordingResult: Sendable, Hashable {
     let usedLiDAR: Bool
     /// Movie-timeline window to analyze (user trim); nil = whole recording.
     var analysisRange: ClosedRange<TimeInterval>?
+    /// Load on the bar, entered at review time; nil = not logged.
+    var weightKg: Double?
 
     init(
         videoURL: URL,
         depthSidecarURL: URL?,
         duration: TimeInterval,
         usedLiDAR: Bool,
-        analysisRange: ClosedRange<TimeInterval>? = nil
+        analysisRange: ClosedRange<TimeInterval>? = nil,
+        weightKg: Double? = nil
     ) {
         self.videoURL = videoURL
         self.depthSidecarURL = depthSidecarURL
         self.duration = duration
         self.usedLiDAR = usedLiDAR
         self.analysisRange = analysisRange
+        self.weightKg = weightKg
     }
 }
 
@@ -68,6 +73,14 @@ final class CameraService: NSObject, @unchecked Sendable {
     private var lastVideoTime: CMTime?
     private var keepEveryOtherDepthFrame = true
     private var depthFrameParity = false
+
+    // Camera pitch while recording: a propped phone tilts, compressing
+    // vertical image spans by ~cos(pitch); the analysis needs the angle to
+    // undo that. Gravity samples accumulate on `motionQueue`, are read
+    // after updates stop.
+    private let motionManager = CMMotionManager()
+    private let motionQueue = OperationQueue()
+    private var gravityZSamples: [Double] = []
 
     // MARK: - Setup
 
@@ -212,6 +225,7 @@ final class CameraService: NSObject, @unchecked Sendable {
                     sessionStartTime = nil
                     lastVideoTime = nil
                     depthFrameParity = false
+                    startPitchSampling()
                     continuation.resume()
                 } catch {
                     continuation.resume(throwing: error)
@@ -231,6 +245,9 @@ final class CameraService: NSObject, @unchecked Sendable {
                 let end = lastVideoTime
                 let depthURL = depthSidecarURL
                 let usedLiDAR = depthWriter != nil
+                if let pitch = finishPitchSampling() {
+                    depthWriter?.cameraPitchRadians = Float(pitch)
+                }
                 try? depthWriter?.finish()
                 assetWriter = nil
                 writerInput = nil
@@ -257,6 +274,32 @@ final class CameraService: NSObject, @unchecked Sendable {
                 }
             }
         }
+    }
+
+    /// Samples device gravity while recording. The back camera looks along
+    /// −z in device space, so sin(pitch of the optical axis) = gravity.z;
+    /// only cos(pitch) is consumed downstream, making the sign convention
+    /// harmless.
+    private func startPitchSampling() {
+        guard motionManager.isDeviceMotionAvailable else { return }
+        gravityZSamples = []
+        motionQueue.maxConcurrentOperationCount = 1
+        motionManager.deviceMotionUpdateInterval = 0.25
+        motionManager.startDeviceMotionUpdates(to: motionQueue) { [weak self] motion, _ in
+            guard let gravity = motion?.gravity else { return }
+            self?.gravityZSamples.append(gravity.z)
+        }
+    }
+
+    /// Stops gravity sampling and returns the mean pitch, nil when motion
+    /// was unavailable.
+    private func finishPitchSampling() -> Double? {
+        guard motionManager.isDeviceMotionAvailable else { return nil }
+        motionManager.stopDeviceMotionUpdates()
+        motionQueue.waitUntilAllOperationsAreFinished()
+        guard !gravityZSamples.isEmpty else { return nil }
+        let mean = gravityZSamples.reduce(0, +) / Double(gravityZSamples.count)
+        return asin(max(-1, min(1, mean)))
     }
 
     // Runs on dataQueue.

@@ -27,8 +27,26 @@ struct JointFrame: Codable, Sendable {
     var time: TimeInterval
     var positions: [BodyJoint: SIMD3<Float>]
     var imagePoints: [BodyJoint: SIMD2<Float>]
+    /// Metric scale at the lifter's depth plane: meters spanned by the full
+    /// image height (LiDAR body depth × pixel height ÷ focal length), so
+    /// Δmeters = Δnormalized-y × this. nil without LiDAR or when the depth
+    /// reading was rejected; optional so old persisted analyses decode.
+    var metersPerImageHeight: Float?
 
     func position(_ joint: BodyJoint) -> SIMD3<Float>? { positions[joint] }
+}
+
+/// One full-rate bar observation: the wrist midpoint's normalized image y
+/// and the metric scale of its frame. The 2D detector is cheap enough to
+/// run on every capture frame (30 fps), so bar velocity gets twice the
+/// temporal resolution of the 3D joint series.
+struct BarSample: Codable, Sendable, Equatable {
+    var time: TimeInterval
+    /// Wrist-midpoint image y, Vision-normalized (origin bottom-left).
+    var y: Double
+    /// Meters per full image height at the lifter's plane; nil without
+    /// LiDAR (see `JointFrame.metersPerImageHeight`).
+    var scale: Double?
 }
 
 struct JointSeries: Codable, Sendable {
@@ -37,6 +55,9 @@ struct JointSeries: Codable, Sendable {
     var bodyHeight: Float?
     /// Whether LiDAR depth contributed to the extraction.
     var usedDepth: Bool
+    /// Full-capture-rate bar trajectory for velocity; optional so analyses
+    /// saved before it existed still decode.
+    var barTrack: [BarSample]?
 
     var duration: TimeInterval {
         guard let first = frames.first, let last = frames.last else { return 0 }

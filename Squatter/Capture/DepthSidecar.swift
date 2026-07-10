@@ -7,13 +7,16 @@ import ImageIO
 ///
 ///   "SQDP" magic, UInt32 version
 ///   v2+: Float32 camera focal length in pixels (0 = unknown)
+///   v3+: Float32 camera pitch in radians (NaN = unknown) — the optical
+///        axis' tilt from horizontal while recording; a propped-up phone
+///        tilts, which compresses vertical image spans by ~cos(pitch)
 ///   repeated frames:
 ///     Float64 presentationTimeSeconds
 ///     UInt32 descriptionPlistLength, UInt32 compressedDepthLength
 ///     [description plist bytes][zlib-compressed DepthFloat16 pixel bytes]
 enum DepthSidecar {
     static let magic = Data("SQDP".utf8)
-    static let version: UInt32 = 2
+    static let version: UInt32 = 3
     static let fileExtension = "depth"
 }
 
@@ -28,6 +31,9 @@ final class DepthSidecarWriter {
     /// Camera focal length in pixels, from the capture connection's intrinsic
     /// matrix. Set any time before `finish()`; 0 = unknown.
     var focalLengthPixels: Float = 0
+    /// Mean camera pitch (radians from horizontal) while recording, from
+    /// device motion. Set any time before `finish()`; NaN = unknown.
+    var cameraPitchRadians: Float = .nan
 
     init(url: URL) throws {
         FileManager.default.createFile(atPath: url.path, contents: nil)
@@ -35,6 +41,7 @@ final class DepthSidecarWriter {
         var header = DepthSidecar.magic
         header.appendLittleEndian(DepthSidecar.version)
         header.appendLittleEndian(focalLengthPixels.bitPattern)
+        header.appendLittleEndian(cameraPitchRadians.bitPattern)
         try handle.write(contentsOf: header)
     }
 
@@ -64,12 +71,13 @@ final class DepthSidecarWriter {
     }
 
     func finish() throws {
-        // The focal length arrives with the first video frame, after the
-        // header was written — patch it in before closing.
+        // The focal length and pitch arrive after the header was written —
+        // patch them in before closing.
         try handle.seek(toOffset: UInt64(DepthSidecar.magic.count) + 4)
-        var focal = Data()
-        focal.appendLittleEndian(focalLengthPixels.bitPattern)
-        try handle.write(contentsOf: focal)
+        var patch = Data()
+        patch.appendLittleEndian(focalLengthPixels.bitPattern)
+        patch.appendLittleEndian(cameraPitchRadians.bitPattern)
+        try handle.write(contentsOf: patch)
         try handle.close()
     }
 }
@@ -81,6 +89,9 @@ final class DepthSidecarReader {
     /// Camera focal length in pixels; nil for v1 sidecars or when the capture
     /// connection did not deliver intrinsics.
     let focalLengthPixels: Float?
+    /// Camera pitch from horizontal while recording; nil for pre-v3 sidecars
+    /// or when device motion was unavailable.
+    let cameraPitchRadians: Float?
 
     init(url: URL) throws {
         let data = try Data(contentsOf: url, options: .mappedIfSafe)
@@ -92,13 +103,24 @@ final class DepthSidecarReader {
         guard version <= DepthSidecar.version else {
             throw CocoaError(.fileReadCorruptFile)
         }
-        if version >= 2, data.count >= 12 {
-            let focal = Float(bitPattern: UInt32(littleEndian: data.subdata(in: 8 ..< 12)
+        func float(at start: Int) -> Float {
+            Float(bitPattern: UInt32(littleEndian: data.subdata(in: start ..< start + 4)
                 .withUnsafeBytes { $0.loadUnaligned(as: UInt32.self) }))
+        }
+        if version >= 2, data.count >= 12 {
+            let focal = float(at: 8)
             focalLengthPixels = focal > 0 ? focal : nil
-            offset = 12
+            if version >= 3, data.count >= 16 {
+                let pitch = float(at: 12)
+                cameraPitchRadians = pitch.isFinite ? pitch : nil
+                offset = 16
+            } else {
+                cameraPitchRadians = nil
+                offset = 12
+            }
         } else {
             focalLengthPixels = nil
+            cameraPitchRadians = nil
             offset = 8
         }
         self.data = data

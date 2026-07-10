@@ -15,7 +15,10 @@ struct ReportView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 header
-                PlayerOverlayView(playback: playback, series: analysis.series, reps: analysis.reps)
+                PlayerOverlayView(
+                    playback: playback, series: analysis.series,
+                    reps: analysis.reps, activity: analysis.kind
+                )
                     .clipShape(RoundedRectangle(cornerRadius: 20))
                 if !analysis.reps.isEmpty {
                     if #available(iOS 18.0, *) {
@@ -51,9 +54,26 @@ struct ReportView: View {
                 }
                 .font(.caption)
                 .foregroundStyle(.secondary)
+                if let barSpeed = barSpeedLine {
+                    Text(barSpeed)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
             Spacer()
         }
+    }
+
+    /// Headline bar speed: the set's best MCV, plus velocity loss once
+    /// three reps carry velocities (LiDAR captures only).
+    private var barSpeedLine: String? {
+        let velocities = analysis.reps.compactMap(\.meanConcentricVelocity)
+        guard let best = velocities.max(), best > 0 else { return nil }
+        var line = String(format: "bar speed %.2f m/s best", best)
+        if velocities.count >= 3, let last = velocities.last {
+            line += String(format: " · %.0f%% loss", (best - last) / best * 100)
+        }
+        return line
     }
 
     private var repStrip: some View {
@@ -94,8 +114,9 @@ private struct RepCard: View {
             switch activity {
             case .squat: squatLines
             case .benchPress: benchLines
+            case .deadlift: deadliftLines
             }
-            Text(String(format: "%.1fs ↓ %.1fs ↑", rep.eccentricSeconds, rep.concentricSeconds))
+            Text(tempoLine)
                 .font(.caption2)
                 .foregroundStyle(.secondary)
         }
@@ -147,6 +168,39 @@ private struct RepCard: View {
                 good: lockout >= AnalysisTuning.benchLockoutElbowDegrees
             )
         }
+    }
+
+    @ViewBuilder
+    private var deadliftLines: some View {
+        let spine = rep.spineFlexionDegrees ?? 180
+        metricLine(
+            "Back",
+            spine >= AnalysisTuning.deadliftSpineFlexionWarningDegrees ? "neutral" :
+                spine >= AnalysisTuning.deadliftSpineFlexionRiskDegrees ? "bending" : "rounded",
+            good: spine >= AnalysisTuning.deadliftSpineFlexionWarningDegrees
+        )
+        if let gap = rep.barGapRatio {
+            metricLine(
+                "Bar",
+                gap <= AnalysisTuning.deadliftBarGapWarningRatio ? "close" : "away",
+                good: gap <= AnalysisTuning.deadliftBarGapWarningRatio
+            )
+        }
+        if let lockout = rep.lockoutKneeDegrees {
+            metricLine(
+                "Lockout",
+                lockout >= AnalysisTuning.deadliftLockoutKneeDegrees ? "tall" : "soft",
+                good: lockout >= AnalysisTuning.deadliftLockoutKneeDegrees
+            )
+        }
+    }
+
+    private var tempoLine: String {
+        var line = String(format: "%.1fs ↓ %.1fs ↑", rep.eccentricSeconds, rep.concentricSeconds)
+        if let velocity = rep.meanConcentricVelocity {
+            line += String(format: " · %.2f m/s", velocity)
+        }
+        return line
     }
 
     private func metricLine(_ label: String, _ value: String, good: Bool) -> some View {

@@ -15,6 +15,9 @@ final class WorkoutSession {
     var analysisData: Data
     /// Raw ActivityType; defaulted so pre-bench sessions migrate as squats.
     var activityRaw: String = ActivityType.squat.rawValue
+    /// Load on the bar; optional so weightless and older sessions migrate.
+    /// Feeds the load–velocity profile and 1RM estimate.
+    var weightKg: Double?
 
     var activity: ActivityType { ActivityType(rawValue: activityRaw) ?? .squat }
 
@@ -27,6 +30,7 @@ final class WorkoutSession {
         self.usedLiDAR = analysis.usedDepth
         self.analysisData = try JSONEncoder().encode(analysis)
         self.activityRaw = analysis.kind.rawValue
+        self.weightKg = recording.weightKg
     }
 
     var videoURL: URL? {

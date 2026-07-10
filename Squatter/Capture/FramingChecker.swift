@@ -36,6 +36,10 @@ final class FramingChecker: @unchecked Sendable {
         case .benchPress:
             [.nose, .leftShoulder, .rightShoulder, .leftElbow, .rightElbow,
              .leftWrist, .rightWrist, .leftHip, .rightHip]
+        case .deadlift:
+            // Full body plus the wrists: the bar-in-hands is the signal.
+            [.nose, .leftShoulder, .rightShoulder, .leftWrist, .rightWrist,
+             .leftHip, .rightHip, .leftKnee, .rightKnee, .leftAnkle, .rightAnkle]
         }
     }
     private static let confidenceThreshold: VNConfidence = 0.3

@@ -113,7 +113,7 @@ struct LiveRepCounter {
     /// Feed standing samples during the positioning green-hold to pin the
     /// baseline before the first descent.
     mutating func calibrate(with sample: LivePoseSample) {
-        guard activity == .squat, let hip = sample.hipMid else { return }
+        guard activity != .benchPress, let hip = sample.hipMid else { return }
         calibrationHipYs.append(hip.y)
         if calibrationHipYs.count > 40 { calibrationHipYs.removeFirst() }
         calibratedStanding = median(of: calibrationHipYs)
@@ -121,7 +121,11 @@ struct LiveRepCounter {
 
     mutating func ingest(_ sample: LivePoseSample) -> Event? {
         switch activity {
-        case .squat: ingestSquat(sample)
+        // The deadlift hinge drops the hips well below standing, so the
+        // squat hip signal counts its reps too — but geometry cues stay
+        // off: a deep hinge is not a fault, the hip never passes the knee,
+        // and the arms hang straight. Timing cues still apply.
+        case .squat, .deadlift: ingestSquat(sample)
         case .benchPress: ingestBench(sample)
         }
     }
@@ -173,19 +177,23 @@ struct LiveRepCounter {
             guard sample.time - repStart >= AnalysisTuning.minimumRepDuration else { return nil }
             count += 1
             var faults: [LiveFault] = []
-            if let kneeY = bottomKneeY,
-               bottomSignal > kneeY + AnalysisTuning.liveSquatHighMargin {
-                faults.append(.shallowDepth)
-            }
-            if let lean = median(of: repLeans), lean > AnalysisTuning.liveSquatFoldDegrees {
-                faults.append(.torsoFold)
-            }
-            if let elbows = median(of: repElbowDegrees),
-               elbows > AnalysisTuning.liveElbowLiftDegrees {
-                faults.append(.elbowsUp)
-            }
-            if bottomTime - repStart < AnalysisTuning.liveFastDescentSeconds {
-                faults.append(.fastDescent)
+            // Geometry cues are squat-only: a deadlift's hinge and hanging
+            // arms would trip every one of them by design.
+            if activity == .squat {
+                if let kneeY = bottomKneeY,
+                   bottomSignal > kneeY + AnalysisTuning.liveSquatHighMargin {
+                    faults.append(.shallowDepth)
+                }
+                if let lean = median(of: repLeans), lean > AnalysisTuning.liveSquatFoldDegrees {
+                    faults.append(.torsoFold)
+                }
+                if let elbows = median(of: repElbowDegrees),
+                   elbows > AnalysisTuning.liveElbowLiftDegrees {
+                    faults.append(.elbowsUp)
+                }
+                if bottomTime - repStart < AnalysisTuning.liveFastDescentSeconds {
+                    faults.append(.fastDescent)
+                }
             }
             if sample.time - bottomTime > AnalysisTuning.liveSlowAscentSeconds {
                 faults.append(.slowAscent)

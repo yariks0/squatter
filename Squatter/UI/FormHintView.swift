@@ -331,6 +331,61 @@ private struct FormDiagram {
                 stroke([(0.36, 0.62), (0.46, 0.44), (0.40, 0.30)], accent) // elbow still bent
                 disc(0.40, 0.27, radius: 0.035, .secondary)
             }
+        case .neutralSpine:
+            floor()
+            // Hinged over the bar, seen from the side; the back line carries
+            // the fault: rounded arc vs one straight line hips-to-head.
+            stroke([(0.42, 0.66), (0.55, 0.60), (0.52, 0.92)], ink) // thigh + shin
+            stroke([(0.55, 0.92), (0.64, 0.92)], ink)
+            disc(0.30, 0.62, radius: 0.035, .secondary) // the bar
+            stroke([(0.33, 0.62), (0.36, 0.42)], ink.opacity(0.7)) // arm to the hips' line
+            if correct {
+                stroke([(0.42, 0.66), (0.24, 0.34)], accent) // flat back
+                disc(0.21, 0.28, radius: 0.05, accent)
+            } else {
+                var arc = Path()
+                arc.move(to: point(0.42, 0.66))
+                arc.addQuadCurve(to: point(0.24, 0.36), control: point(0.24, 0.62))
+                context.stroke(arc, with: .color(accent), style: StrokeStyle(lineWidth: 2.5, lineCap: .round))
+                disc(0.24, 0.30, radius: 0.05, accent)
+                arrow(from: (0.14, 0.52), to: (0.22, 0.46), accent)
+            }
+        case .barClose:
+            floor()
+            // Mid-pull from the side: shins vertical, the bar either grazing
+            // the legs or swung out front.
+            stroke([(0.50, 0.50), (0.58, 0.62), (0.56, 0.92)], ink) // torso hint→knee→ankle
+            stroke([(0.46, 0.36), (0.50, 0.50)], ink)
+            disc(0.44, 0.28, radius: 0.05, ink)
+            if correct {
+                disc(0.56, 0.68, radius: 0.04, accent) // bar against the leg
+                stroke([(0.48, 0.42), (0.56, 0.64)], ink.opacity(0.7)) // arm
+                stroke([(0.60, 0.30), (0.60, 0.90)], accent, width: 1, dash: [3, 3])
+            } else {
+                disc(0.74, 0.68, radius: 0.04, accent) // bar out front
+                stroke([(0.48, 0.42), (0.74, 0.64)], ink.opacity(0.7))
+                arrow(from: (0.62, 0.80), to: (0.74, 0.80), accent)
+                stroke([(0.58, 0.30), (0.58, 0.90)], ink.opacity(0.4), width: 1, dash: [3, 3])
+            }
+        case .hipsRiseEarly:
+            floor()
+            // First inches of the pull: hips and shoulders keep their angle
+            // together vs the hips popping up while the bar stays low.
+            disc(0.34, 0.60, radius: 0.035, .secondary) // bar still low
+            stroke([(0.38, 0.60), (0.42, 0.46)], ink.opacity(0.7)) // arm
+            if correct {
+                stroke([(0.42, 0.46), (0.58, 0.56)], accent) // back line intact
+                stroke([(0.58, 0.56), (0.66, 0.68), (0.62, 0.92)], ink)
+                disc(0.39, 0.40, radius: 0.05, accent)
+                arrow(from: (0.50, 0.36), to: (0.50, 0.24), accent)
+                arrow(from: (0.66, 0.48), to: (0.66, 0.36), accent)
+            } else {
+                stroke([(0.42, 0.46), (0.60, 0.40)], accent) // hips high, back flat-horizontal
+                stroke([(0.60, 0.40), (0.66, 0.64), (0.62, 0.92)], ink)
+                disc(0.39, 0.40, radius: 0.05, accent)
+                arrow(from: (0.64, 0.34), to: (0.64, 0.22), accent) // hips up
+                stroke([(0.44, 0.28), (0.52, 0.28)], accent, width: 1.5) // shoulders stuck
+            }
         case .framing:
             floor()
             // Lifter at the right, phone at the left; the cone is the view.

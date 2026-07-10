@@ -15,6 +15,7 @@ struct SetupGuideView: View {
                 switch activity {
                 case .squat: squatSteps
                 case .benchPress: benchSteps
+                case .deadlift: deadliftSteps
                 }
 
                 Button(action: onContinue) {
@@ -94,6 +95,35 @@ struct SetupGuideView: View {
             icon: "lightbulb.max",
             title: "Good light helps",
             text: "Even lighting and contrast between you and the background improve tracking. Avoid strong backlight, and make sure the plates don't hide your arms from the camera."
+        )
+    }
+
+    @ViewBuilder
+    private var deadliftSteps: some View {
+        step(
+            icon: "iphone.gen3",
+            title: "Prop up your phone",
+            text: "About 3 meters away, roughly knee height, propped steady in portrait. That distance keeps you and the plates in frame and stays within LiDAR range."
+        )
+        step(
+            icon: "angle",
+            title: "Stand at a 45° angle",
+            text: "Face halfway between head-on and side-on. This one angle shows the back line, the bar path, and hip–shoulder timing — straight-on hides the hinge entirely."
+        )
+        step(
+            icon: "person.crop.rectangle",
+            title: "Whole body and bar in frame",
+            text: "Head to feet visible for the entire set, plates on the floor included. The indicator on the next screen turns green when framing is right."
+        )
+        step(
+            icon: "waveform",
+            title: "The phone talks you in",
+            text: "Tap start and walk to the bar — the phone speaks placement guidance, counts down by itself once framing holds green, then counts your pulls out loud. Mute it with the speaker button."
+        )
+        step(
+            icon: "lightbulb.max",
+            title: "Good light helps",
+            text: "Even lighting and contrast between you and the background improve tracking. Avoid strong backlight, and keep chalk dust off the lens."
         )
     }
 

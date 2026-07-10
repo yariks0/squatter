@@ -40,10 +40,13 @@ struct PlayerOverlayView: View {
     let playback: PlaybackModel
     let series: JointSeries
     var reps: [RepMetrics] = []
+    var activity: ActivityType = .squat
 
     var body: some View {
         VideoPlayer(player: playback.player) {
-            SkeletonOverlay(series: series, reps: reps, time: playback.currentTime)
+            SkeletonOverlay(
+                series: series, reps: reps, activity: activity, time: playback.currentTime
+            )
         }
         .aspectRatio(9 / 16, contentMode: .fit)
     }
@@ -52,12 +55,15 @@ struct PlayerOverlayView: View {
 private struct SkeletonOverlay: View {
     let series: JointSeries
     let reps: [RepMetrics]
+    let activity: ActivityType
     let time: TimeInterval
 
     var body: some View {
         Canvas { context, size in
             guard let frame = nearestFrame(to: time) else { return }
-            let faults = FormFaultDetector.faults(in: frame, at: frame.time, reps: reps)
+            let faults = FormFaultDetector.faults(
+                in: frame, at: frame.time, reps: reps, activity: activity
+            )
             func point(_ joint: BodyJoint) -> CGPoint? {
                 guard let p = frame.imagePoints[joint] else { return nil }
                 // Vision image points: normalized, origin bottom-left.

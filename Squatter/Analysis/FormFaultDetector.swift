@@ -21,9 +21,13 @@ enum FormFaultDetector {
     /// plus rep-level ones mapped to the moment they happen — missed depth
     /// lights the legs around the bottom, a free-fall descent lights them
     /// through the drop.
-    static func faults(in frame: JointFrame, at time: TimeInterval, reps: [RepMetrics]) -> FrameFaults {
-        var faults = faults(in: frame)
-        guard let rep = reps.first(where: { time >= $0.startTime && time <= $0.endTime })
+    static func faults(
+        in frame: JointFrame, at time: TimeInterval, reps: [RepMetrics],
+        activity: ActivityType = .squat
+    ) -> FrameFaults {
+        var faults = faults(in: frame, activity: activity)
+        guard activity == .squat,
+              let rep = reps.first(where: { time >= $0.startTime && time <= $0.endTime })
         else { return faults }
         let bottomTime = rep.startTime + rep.eccentricSeconds
         let shallow = rep.hipBelowKneeDegrees < AnalysisTuning.parallelToleranceDegrees
@@ -39,16 +43,27 @@ enum FormFaultDetector {
         return faults
     }
 
-    static func faults(in frame: JointFrame) -> FrameFaults {
+    static func faults(in frame: JointFrame, activity: ActivityType = .squat) -> FrameFaults {
         var faults = FrameFaults()
 
-        if let root = frame.position(.root), let shoulders = frame.position(.centerShoulder) {
-            let trunk = shoulders - root
-            let length = simd_length(trunk)
-            if length > 1e-6 {
-                let lean = Double(acos(max(-1, min(1, trunk.y / length)))) * 180 / .pi
-                faults.torso = lean >= AnalysisTuning.torsoLeanWarningDegrees
+        switch activity {
+        case .squat:
+            if let root = frame.position(.root), let shoulders = frame.position(.centerShoulder) {
+                let trunk = shoulders - root
+                let length = simd_length(trunk)
+                if length > 1e-6 {
+                    let lean = Double(acos(max(-1, min(1, trunk.y / length)))) * 180 / .pi
+                    faults.torso = lean >= AnalysisTuning.torsoLeanWarningDegrees
+                }
             }
+        case .deadlift:
+            // A deep hinge is correct — the fault is the back losing its
+            // line, judged by the spine-joint angle, not the lean.
+            if let spine = MetricsCalculator.jointAngle(frame, .root, .spine, .centerShoulder) {
+                faults.torso = spine < AnalysisTuning.deadliftSpineFlexionWarningDegrees
+            }
+        case .benchPress:
+            break // Lying torso angles carry no standard; the rules cover it.
         }
 
         if let leftHip = frame.position(.leftHip), let rightHip = frame.position(.rightHip) {

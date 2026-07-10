@@ -62,6 +62,7 @@ struct ProgressDashboard: View {
         switch activity {
         case .squat: Kodo.soulRedBright
         case .benchPress: Kodo.titanium
+        case .deadlift: Kodo.copper
         }
     }
 
@@ -86,6 +87,9 @@ struct ProgressDashboard: View {
             statTiles
             repsChart
             scoreChart
+            if let scope {
+                strengthCard(for: scope)
+            }
         }
         .listRowBackground(Color.clear)
         .listRowSeparator(.hidden)
@@ -230,6 +234,85 @@ struct ProgressDashboard: View {
     private var latestPerActivity: [DayStat] {
         ActivityType.allCases.compactMap { activity in
             days.last { $0.activity == activity }
+        }
+    }
+
+    // MARK: Load–velocity / estimated 1RM (single-lift scope only —
+    // a profile mixes loads and bar speeds of one movement)
+
+    /// (load, best-rep MCV) per session that has both a logged weight and
+    /// LiDAR velocities.
+    private func loadVelocityPoints(for activity: ActivityType) -> [(load: Double, velocity: Double)] {
+        sessions.compactMap { session in
+            guard session.activity == activity,
+                  let load = session.weightKg,
+                  let best = session.analysis()?.reps
+                      .compactMap(\.meanConcentricVelocity).max()
+            else { return nil }
+            return (load, best)
+        }
+    }
+
+    private func strengthCard(for activity: ActivityType) -> some View {
+        let points = loadVelocityPoints(for: activity)
+        let profile = LoadVelocityProfile.fit(
+            points: points.map { (loadKg: $0.load, velocity: $0.velocity) }
+        )
+        let minimalVelocity = switch activity {
+        case .squat: AnalysisTuning.squatMinimalVelocity
+        case .benchPress: AnalysisTuning.benchMinimalVelocity
+        case .deadlift: AnalysisTuning.deadliftMinimalVelocity
+        }
+        return KodoCard {
+            VStack(alignment: .leading, spacing: 10) {
+                KodoCaption("Strength · load–velocity")
+                if let profile {
+                    let oneRepMax = profile.estimatedOneRepMax(atMinimalVelocity: minimalVelocity)
+                    HStack(spacing: 0) {
+                        StatTile(label: "Est. 1RM", value: "\(Int(oneRepMax.rounded())) kg")
+                        tileDivider
+                        StatTile(label: "Loads logged", value: "\(profile.pointCount)")
+                    }
+                    Chart {
+                        ForEach(points, id: \.load) { point in
+                            PointMark(
+                                x: .value("Load", point.load),
+                                y: .value("MCV", point.velocity)
+                            )
+                            .symbolSize(60)
+                            .foregroundStyle(liftColor(activity))
+                        }
+                        ForEach([points.map(\.load).min() ?? 0, oneRepMax], id: \.self) { load in
+                            LineMark(
+                                x: .value("Load", load),
+                                y: .value("MCV", profile.predictedVelocity(atLoad: load))
+                            )
+                            .lineStyle(StrokeStyle(lineWidth: 1.5))
+                            .foregroundStyle(Kodo.inkSecondary)
+                        }
+                        RuleMark(y: .value("MCV", minimalVelocity))
+                            .lineStyle(StrokeStyle(lineWidth: 1, dash: [4, 4]))
+                            .foregroundStyle(Kodo.hairline)
+                            .annotation(position: .topTrailing) {
+                                Text("1RM velocity")
+                                    .font(.caption2)
+                                    .foregroundStyle(Kodo.inkSecondary)
+                            }
+                    }
+                    .chartXAxisLabel("kg", alignment: .trailing)
+                    .chartYAxisLabel("m/s")
+                    .chartYAxis { kodoAxis(values: .automatic(desiredCount: 3)) }
+                    .chartXAxis { kodoAxis(values: .automatic(desiredCount: 4)) }
+                    .frame(height: 150)
+                } else {
+                    Text(points.isEmpty
+                        ? "Log the weight on the bar when analyzing a set — three different loads unlock your estimated 1RM, no max attempt needed."
+                        : "Sets at three different loads (10 kg apart or more) unlock your estimated 1RM — \(points.count) logged so far.")
+                        .font(.subheadline)
+                        .foregroundStyle(Kodo.inkSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
         }
     }
 

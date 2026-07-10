@@ -5,6 +5,7 @@ import Foundation
 enum ActivityType: String, Codable, Sendable, CaseIterable, Identifiable, Hashable {
     case squat
     case benchPress
+    case deadlift
 
     var id: String { rawValue }
 
@@ -12,6 +13,7 @@ enum ActivityType: String, Codable, Sendable, CaseIterable, Identifiable, Hashab
         switch self {
         case .squat: "Squat"
         case .benchPress: "Bench press"
+        case .deadlift: "Deadlift"
         }
     }
 
@@ -19,6 +21,7 @@ enum ActivityType: String, Codable, Sendable, CaseIterable, Identifiable, Hashab
         switch self {
         case .squat: "figure.strengthtraining.functional"
         case .benchPress: "figure.strengthtraining.traditional"
+        case .deadlift: "figure.cross.training"
         }
     }
 }

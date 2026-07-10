@@ -10,6 +10,12 @@ enum Kodo {
     static let titanium = dynamic(
         light: UIColor(white: 0.44, alpha: 1), dark: UIColor(white: 0.74, alpha: 1)
     )
+    /// Third series color (deadlift): brushed copper, warm against Soul Red
+    /// and titanium without competing with either.
+    static let copper = dynamic(
+        light: UIColor(red: 0.66, green: 0.42, blue: 0.20, alpha: 1),
+        dark: UIColor(red: 0.82, green: 0.56, blue: 0.30, alpha: 1)
+    )
     static let cardTop = dynamic(
         light: UIColor(red: 0.965, green: 0.965, blue: 0.975, alpha: 1),
         dark: UIColor(red: 0.165, green: 0.17, blue: 0.18, alpha: 1)

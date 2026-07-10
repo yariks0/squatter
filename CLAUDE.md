@@ -29,6 +29,8 @@ iOS 17 target (some UI is `@available(iOS 18)`), tests use Swift Testing.
   sidecar via `DepthSidecar`), `FramingChecker` live full-body check.
 - `Squatter/Analysis/` — the pipeline: `PoseExtractor` (video → `JointSeries`;
   resumes if the decoder dies mid-file) → `JointSeriesSmoother` →
+  `BodyGeometry` scan + `SkeletonCorrector` (squat only: standing-frame bone
+  lengths pull the pelvis Vision mis-projects at depth back down) →
   `RepSegmenter` → `MetricsCalculator` → `FormRules` findings, gated by
   `TrackingQuality`. **All thresholds live in `AnalysisTuning.swift`.**
 - `Squatter/Coach/` — Anthropic API coaching: `CoachPrompt` (system prompt

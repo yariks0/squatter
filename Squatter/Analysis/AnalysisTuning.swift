@@ -34,6 +34,18 @@ enum AnalysisTuning {
     static let valgusWarningRatio = 0.18
     static let valgusRiskRatio = 0.32
 
+    // MARK: Body-geometry scan (see BodyGeometry / SkeletonCorrector)
+    /// Fraction of the standing baseline above which a frame counts as
+    /// standing — the auto-scan frames bone lengths are measured from.
+    static let geometryScanFraction = 0.97
+    /// Standing frames (and per-bone samples) required before the scan is
+    /// trusted; below this the session runs uncorrected.
+    static let geometryMinimumScanFrames = 12
+    /// Length-constraint relaxation rounds per frame. The pelvis–knee and
+    /// pelvis–spine–shoulder chains are short; this converges well past
+    /// measurement precision.
+    static let geometrySolverIterations = 12
+
     // MARK: Tempo
     /// Below this the descent is a free fall rather than a controlled ~1–2 s
     /// eccentric. The elastic rebound out of the bottom is fine — the descent

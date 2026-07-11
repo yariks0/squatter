@@ -16,7 +16,7 @@ struct AttemptReviewView: View {
     @State private var trimEnd: TimeInterval = 0
     @State private var activity: ActivityType
     @State private var weightText = ""
-    @State private var detectedDiameters: [Double] = []
+    @State private var detectedPlates: [PlateDetector.Sighting] = []
 
     /// Shortest analyzable window — roughly one slow rep.
     private static let minimumWindow: TimeInterval = 2
@@ -65,7 +65,7 @@ struct AttemptReviewView: View {
 
             weightField
 
-            PlatePickerView(weightText: $weightText, detectedDiameters: detectedDiameters)
+            PlatePickerView(weightText: $weightText, detected: detectedPlates)
 
             Button {
                 if let weight = enteredWeightKg {
@@ -97,7 +97,7 @@ struct AttemptReviewView: View {
             if let detection = await PlateDetector.detect(
                 videoURL: videoURL, depthSidecarURL: depthSidecarURL
             ) {
-                detectedDiameters = detection.diametersMeters
+                detectedPlates = detection.sightings
             }
         }
         .onChange(of: activity) { prefillWeight() }

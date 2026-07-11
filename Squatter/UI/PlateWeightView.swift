@@ -7,7 +7,7 @@ import SwiftUI
 /// where every plate is black and only diameter tells them apart.
 struct PlatePickerView: View {
     @Binding var weightText: String
-    let detectedDiameters: [Double]
+    let detected: [PlateDetector.Sighting]
 
     @State private var catalog = PlateCatalogStore.load() ?? PlateCatalog()
     @State private var counts: [PlateSpec: Int] = [:]
@@ -37,13 +37,15 @@ struct PlatePickerView: View {
             } else {
                 plateChips
             }
-            ForEach(unknownDetections, id: \.self) { diameter in
+            ForEach(unknownDetections, id: \.self) { sighting in
                 Button {
-                    teachDiameter = TeachTarget(diameterMeters: diameter)
+                    teachDiameter = TeachTarget(sighting: sighting)
                     teachWeightText = ""
                 } label: {
                     Label(String(
-                        format: "Unknown ~%.0f cm plate on the bar — teach it?", diameter * 100
+                        format: "Unknown %@~%.0f cm plate on the bar — teach it?",
+                        sighting.color.map { "\($0.rawValue) " } ?? "",
+                        sighting.diameterMeters * 100
                     ), systemImage: "questionmark.circle")
                     .font(.caption)
                 }
@@ -52,9 +54,9 @@ struct PlatePickerView: View {
         .padding(12)
         .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 12))
         .onAppear(perform: applyDetection)
-        .onChange(of: detectedDiameters) { applyDetection() }
+        .onChange(of: detected) { applyDetection() }
         .sheet(item: $teachDiameter) { target in
-            teachSheet(diameter: target.diameterMeters)
+            teachSheet(target: target)
                 .presentationDetents([.height(230)])
         }
     }
@@ -69,8 +71,15 @@ struct PlatePickerView: View {
                         syncTotal()
                     } label: {
                         VStack(spacing: 2) {
-                            Text("\(weightLabel(plate.weightKg))")
-                                .font(.subheadline.bold())
+                            HStack(spacing: 4) {
+                                if let color = plate.color {
+                                    Circle().fill(color.swatch)
+                                        .frame(width: 8, height: 8)
+                                        .overlay(Circle().strokeBorder(.secondary.opacity(0.5), lineWidth: 0.5))
+                                }
+                                Text("\(weightLabel(plate.weightKg))")
+                                    .font(.subheadline.bold())
+                            }
                             Text(count > 0
                                  ? "×\(count)"
                                  : String(format: "%.0f cm", plate.diameterMeters * 100))
@@ -103,11 +112,15 @@ struct PlatePickerView: View {
         }
     }
 
-    private func teachSheet(diameter: Double) -> some View {
+    private func teachSheet(target: TeachTarget) -> some View {
         VStack(spacing: 16) {
-            Text(String(format: "Plate measured at ~%.0f cm across", diameter * 100))
-                .font(.headline)
-            Text("Tell it once — every future set recognizes this plate by size.")
+            Text(String(
+                format: "%@ plate measured at ~%.0f cm across",
+                target.sighting.color?.rawValue.capitalized ?? "A",
+                target.sighting.diameterMeters * 100
+            ))
+            .font(.headline)
+            Text("Tell it once — every future set recognizes this plate by size\(target.sighting.color != nil ? " and color" : "").")
                 .font(.caption)
                 .foregroundStyle(.secondary)
             HStack {
@@ -120,7 +133,11 @@ struct PlatePickerView: View {
             Button("Save plate") {
                 if let weight = Double(teachWeightText.replacingOccurrences(of: ",", with: ".")),
                    weight > 0 {
-                    let plate = PlateSpec(weightKg: weight, diameterMeters: diameter)
+                    let plate = PlateSpec(
+                        weightKg: weight,
+                        diameterMeters: target.sighting.diameterMeters,
+                        color: target.sighting.color
+                    )
                     catalog.plates.append(plate)
                     try? PlateCatalogStore.save(catalog)
                     counts[plate] = 1
@@ -137,19 +154,23 @@ struct PlatePickerView: View {
         catalog.plates.sorted { $0.weightKg > $1.weightKg }
     }
 
-    /// Detected diameters with no catalog match — teach candidates.
-    private var unknownDetections: [Double] {
-        detectedDiameters.filter { catalog.match(diameterMeters: $0) == nil }
+    /// Detected classes with no catalog match — teach candidates.
+    private var unknownDetections: [PlateDetector.Sighting] {
+        detected.filter {
+            catalog.match(diameterMeters: $0.diameterMeters, color: $0.color) == nil
+        }
     }
 
     /// Detection preselects one of each matched class exactly once — counts
     /// stay the user's call, plates stack invisibly behind each other.
     private func applyDetection() {
-        guard !appliedDetection, !detectedDiameters.isEmpty else { return }
+        guard !appliedDetection, !detected.isEmpty else { return }
         appliedDetection = true
         var matchedAny = false
-        for diameter in detectedDiameters {
-            if let plate = catalog.match(diameterMeters: diameter), counts[plate] == nil {
+        for sighting in detected {
+            if let plate = catalog.match(
+                diameterMeters: sighting.diameterMeters, color: sighting.color
+            ), counts[plate] == nil {
                 counts[plate] = 1
                 matchedAny = true
             }
@@ -171,8 +192,21 @@ struct PlatePickerView: View {
 
 /// Sheet target: a measured-but-unknown plate awaiting its weight.
 private struct TeachTarget: Identifiable {
-    var diameterMeters: Double
-    var id: Double { diameterMeters }
+    var sighting: PlateDetector.Sighting
+    var id: Double { sighting.diameterMeters }
+}
+
+extension PlateColor {
+    var swatch: Color {
+        switch self {
+        case .red: .red
+        case .blue: .blue
+        case .yellow: .yellow
+        case .green: .green
+        case .white: Color(white: 0.95)
+        case .black: .black
+        }
+    }
 }
 
 /// The user's plate inventory: weight + diameter per plate, plus the bar.
@@ -180,6 +214,7 @@ struct PlateCatalogEditorView: View {
     @Binding var catalog: PlateCatalog
     @State private var newWeightText = ""
     @State private var newDiameterText = ""
+    @State private var newColor: PlateColor?
 
     var body: some View {
         List {
@@ -197,6 +232,11 @@ struct PlateCatalogEditorView: View {
             Section {
                 ForEach(catalog.plates.sorted { $0.weightKg > $1.weightKg }) { plate in
                     HStack {
+                        if let color = plate.color {
+                            Circle().fill(color.swatch)
+                                .frame(width: 12, height: 12)
+                                .overlay(Circle().strokeBorder(.secondary.opacity(0.5), lineWidth: 0.5))
+                        }
                         Text(String(format: "%g kg", plate.weightKg))
                         Spacer()
                         Text(String(format: "%.1f cm", plate.diameterMeters * 100))
@@ -212,25 +252,42 @@ struct PlateCatalogEditorView: View {
                 HStack {
                     TextField("kg", text: $newWeightText)
                         .keyboardType(.decimalPad)
-                        .frame(width: 60)
-                    TextField("diameter cm", text: $newDiameterText)
+                        .frame(width: 54)
+                    TextField("cm", text: $newDiameterText)
                         .keyboardType(.decimalPad)
+                        .frame(width: 54)
+                    Picker("", selection: $newColor) {
+                        Text("no color").tag(PlateColor?.none)
+                        ForEach(PlateColor.allCases) { color in
+                            Text(color.rawValue).tag(PlateColor?.some(color))
+                        }
+                    }
+                    .labelsHidden()
+                    Spacer()
                     Button("Add") {
                         guard let weight = Double(newWeightText.replacingOccurrences(of: ",", with: ".")),
                               let diameter = Double(newDiameterText.replacingOccurrences(of: ",", with: ".")),
                               weight > 0, diameter > 5, diameter < 60 else { return }
                         catalog.plates.append(
-                            PlateSpec(weightKg: weight, diameterMeters: diameter / 100)
+                            PlateSpec(weightKg: weight, diameterMeters: diameter / 100, color: newColor)
                         )
                         newWeightText = ""
                         newDiameterText = ""
+                        newColor = nil
                     }
                     .disabled(newWeightText.isEmpty || newDiameterText.isEmpty)
+                }
+                if catalog.plates.isEmpty {
+                    Button {
+                        catalog.plates = PlateCatalog.standardIWFPlates
+                    } label: {
+                        Label("Add the standard color set (IWF)", systemImage: "circle.hexagongrid.fill")
+                    }
                 }
             } header: {
                 Text("Plates")
             } footer: {
-                Text("Diameter is how a plate is recognized on the bar — measure across the face. Two plates within ~1 cm of each other can't be told apart automatically.")
+                Text("Plates are recognized by diameter first — measure across the face — with color as the tie-breaker: standard bumpers are all 45 cm and only the color separates 25/20/15/10. All-black plates work as long as their diameters differ by more than ~1 cm.")
             }
         }
         .navigationTitle("Your plates")

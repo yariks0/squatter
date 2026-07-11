@@ -40,10 +40,51 @@ import Testing
 
     @Test func clusteringNeedsTwoSightingsPerClass() {
         let samples = [0.451, 0.448, 0.325, 0.33, 0.28]  // 0.28 seen once
+            .map { PlateDetector.Sighting(diameterMeters: $0, color: nil) }
         let clusters = PlateDetector.cluster(samples)
         #expect(clusters.count == 2)
-        #expect(abs(clusters[0] - 0.45) < 0.005)
-        #expect(abs(clusters[1] - 0.3275) < 0.005)
+        #expect(abs(clusters[0].diameterMeters - 0.45) < 0.005)
+        #expect(abs(clusters[1].diameterMeters - 0.3275) < 0.005)
         #expect(PlateDetector.cluster([]).isEmpty)
+    }
+
+    /// Standard color-coded set: every full-size bumper is 450 mm — only
+    /// color separates them, and without color the match must refuse.
+    @Test func colorSeparatesSameDiameterBumpers() {
+        let standard = PlateCatalog(barWeightKg: 20, plates: PlateCatalog.standardIWFPlates)
+        #expect(standard.match(diameterMeters: 0.448, color: .red)?.weightKg == 25)
+        #expect(standard.match(diameterMeters: 0.452, color: .blue)?.weightKg == 20)
+        #expect(standard.match(diameterMeters: 0.45, color: .green)?.weightKg == 10)
+        // No color signal on identical diameters: ambiguous, no guess.
+        #expect(standard.match(diameterMeters: 0.45) == nil)
+        // Distinct diameter still matches without color (5 kg is 230 mm).
+        #expect(standard.match(diameterMeters: 0.235)?.weightKg == 5)
+        // Small red change plate vs big red bumper: diameter decides.
+        #expect(standard.match(diameterMeters: 0.19, color: .red)?.weightKg == 2.5)
+    }
+
+    @Test func clusterColorNeedsAgreement() {
+        let agreeing = PlateDetector.cluster([
+            PlateDetector.Sighting(diameterMeters: 0.45, color: .red),
+            PlateDetector.Sighting(diameterMeters: 0.452, color: .red),
+            PlateDetector.Sighting(diameterMeters: 0.449, color: nil),
+        ])
+        #expect(agreeing.first?.color == .red)
+        let conflicted = PlateDetector.cluster([
+            PlateDetector.Sighting(diameterMeters: 0.45, color: .red),
+            PlateDetector.Sighting(diameterMeters: 0.452, color: .blue),
+        ])
+        #expect(conflicted.first?.color == nil)
+    }
+
+    @Test func pixelColorClassification() {
+        #expect(PlateColor.classify(red: 0.8, green: 0.1, blue: 0.12) == .red)
+        #expect(PlateColor.classify(red: 0.1, green: 0.2, blue: 0.75) == .blue)
+        #expect(PlateColor.classify(red: 0.85, green: 0.75, blue: 0.1) == .yellow)
+        #expect(PlateColor.classify(red: 0.15, green: 0.6, blue: 0.2) == .green)
+        #expect(PlateColor.classify(red: 0.9, green: 0.9, blue: 0.88) == .white)
+        #expect(PlateColor.classify(red: 0.08, green: 0.08, blue: 0.09) == .black)
+        // Mid-grey gym wall: no plate code.
+        #expect(PlateColor.classify(red: 0.5, green: 0.5, blue: 0.5) == nil)
     }
 }

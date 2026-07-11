@@ -62,12 +62,16 @@ Plate identity comes from two independent features:
 ## Phasing
 
 - **Phase 1 (shipped):** manual `weightKg` entry feeding the LVP.
-- **Phase 2 (shipped, diameter-first):** implemented as `PlateDetector` +
-  `PlateCatalog` + `PlatePickerView`. Design deviation from the original
-  color plan: the target gym stocks all-black plates, so recognition is
-  **diameter-only** against a *user-taught catalog* (weight + diameter per
-  plate; unknown detected diameters open a teach sheet — the system
-  measures, the user names the weight). The detector reports plate
+- **Phase 2 (shipped, diameter-first + color tie-break):** implemented as
+  `PlateDetector` + `PlateCatalog` + `PlatePickerView`. Two strategies
+  compose: recognition is **by diameter** against a *user-taught catalog*
+  (weight + diameter per plate — all-black gym iron classifies by size
+  alone; unknown detected diameters open a teach sheet — the system
+  measures, the user names the weight), with **color as the tie-breaker**
+  (`PlateColor` pixel voting on the plate face) for standard sets where
+  every full-size bumper is 450 mm and only the IWF code separates
+  25/20/15/10. A one-tap standard IWF set seeds the catalog; ambiguity
+  without a color signal still refuses to guess. The detector reports plate
   *classes* seen on the bar, never counts (identical plates stack
   invisibly); matched classes preselect chips in a per-side plate
   calculator and the user sets counts. Plate depth is sampled from the

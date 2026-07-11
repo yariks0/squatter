@@ -56,7 +56,12 @@ enum SquatAnalyzer {
         let reps = RepSegmenter.segment(series, activity: activity)
         let metrics = MetricsCalculator.metrics(for: reps, in: series, activity: activity)
         let findings = trackable
-            ? FormRules.findings(for: metrics, activity: activity)
+            ? FormRules.findings(
+                for: metrics, activity: activity,
+                // Only the dedicated scan measures this, so a session-scan
+                // fallback never judges depth against itself.
+                depthReference: profile?.metric.deepestHipBelowKneeDegrees
+            )
             : [FormRules.trackingQualityFinding(activity: activity)]
         return SquatAnalysis(
             reps: metrics,

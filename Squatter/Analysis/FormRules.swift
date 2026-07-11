@@ -29,9 +29,15 @@ struct Finding: Codable, Sendable, Identifiable {
 /// Deterministic mapping from per-rep metrics to coaching findings.
 /// Thresholds live in `AnalysisTuning`.
 enum FormRules {
-    static func findings(for reps: [RepMetrics], activity: ActivityType = .squat) -> [Finding] {
+    /// `depthReference` is the lifter's own unloaded full-depth
+    /// hip-below-knee from the body scan's deep hold, when one exists —
+    /// depth is then judged against what their body can actually do.
+    static func findings(
+        for reps: [RepMetrics], activity: ActivityType = .squat,
+        depthReference: Double? = nil
+    ) -> [Finding] {
         switch activity {
-        case .squat: squatFindings(for: reps)
+        case .squat: squatFindings(for: reps, depthReference: depthReference)
         case .benchPress: benchFindings(for: reps)
         case .deadlift: deadliftFindings(for: reps)
         }
@@ -58,7 +64,9 @@ enum FormRules {
         )
     }
 
-    private static func squatFindings(for reps: [RepMetrics]) -> [Finding] {
+    private static func squatFindings(
+        for reps: [RepMetrics], depthReference: Double? = nil
+    ) -> [Finding] {
         guard !reps.isEmpty else {
             return [Finding(
                 severity: .info,
@@ -69,7 +77,7 @@ enum FormRules {
             )]
         }
         var findings: [Finding] = []
-        findings.append(contentsOf: depthFindings(reps))
+        findings.append(contentsOf: depthFindings(reps, reference: depthReference))
         findings.append(contentsOf: valgusFindings(reps))
         findings.append(contentsOf: torsoFindings(reps))
         findings.append(contentsOf: elbowLiftFindings(reps))
@@ -453,18 +461,28 @@ enum FormRules {
         return max(0, 100 - penalty)
     }
 
-    private static func depthFindings(_ reps: [RepMetrics]) -> [Finding] {
+    private static func depthFindings(_ reps: [RepMetrics], reference: Double? = nil) -> [Finding] {
+        // The lifter's own full-depth line: within a margin of what their
+        // body reached at the scan's unloaded deep hold, capped by the
+        // absolute standard — never demand more depth than their mobility
+        // allows, and never call less than their scan shows "impossible".
+        let personalFull = reference.map { $0 - AnalysisTuning.depthReferenceMarginDegrees }
+        let fullLine = min(AnalysisTuning.fullDepthDegrees, personalFull ?? .infinity)
+        let mobilityLimited = fullLine < AnalysisTuning.fullDepthDegrees
+
         let shallow = reps.filter { $0.hipBelowKneeDegrees < AnalysisTuning.parallelToleranceDegrees }
         let atParallel = reps.filter {
             $0.hipBelowKneeDegrees >= AnalysisTuning.parallelToleranceDegrees
-                && $0.hipBelowKneeDegrees < AnalysisTuning.fullDepthDegrees
+                && $0.hipBelowKneeDegrees < fullLine
         }
         var findings: [Finding] = []
         if shallow.isEmpty, atParallel.isEmpty {
             findings.append(Finding(
                 severity: .info,
                 title: "Good depth",
-                detail: "Full depth on every rep — hip crease clearly below the knee, the position Chinese weightlifters train for. Keep it up.",
+                detail: mobilityLimited
+                    ? "Every rep reached your full available depth — as deep as your body scan shows you can currently sit unloaded. Mobility work (heel-elevated squats, ankle stretching) can extend that range over time."
+                    : "Full depth on every rep — hip crease clearly below the knee, the position Chinese weightlifters train for. Keep it up.",
                 repNumbers: []
             ))
         }
@@ -485,6 +503,22 @@ enum FormRules {
                 repNumbers: shallow.map(\.repNumber),
                 topic: .squatDepth
             ))
+        }
+        // Depth left on the table: the scan proves the range exists but the
+        // loaded bottoms sit well above it.
+        if let reference, reps.count >= 2 {
+            let sorted = reps.map(\.hipBelowKneeDegrees).sorted()
+            let median = sorted[sorted.count / 2]
+            if reference - median >= AnalysisTuning.depthReserveDegrees,
+               median < AnalysisTuning.fullDepthDegrees {
+                findings.append(Finding(
+                    severity: .info,
+                    title: "Depth in reserve",
+                    detail: String(format: "Your body scan shows %+.0f° hip-below-knee available unloaded, but this set's bottoms sat around %+.0f°. The range is there — sit in, keep the torso tall, and trust the bounce out of the true bottom.", reference, median),
+                    repNumbers: [],
+                    topic: .squatDepth
+                ))
+            }
         }
         return findings
     }

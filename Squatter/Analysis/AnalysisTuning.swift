@@ -24,6 +24,21 @@ enum AnalysisTuning {
     /// Below this the rep counts as shallow (above parallel).
     static let parallelToleranceDegrees = -8.0
 
+    // MARK: Plate detection (see PlateDetector / PlateCatalog)
+    /// Detected diameters within this of a catalog plate match it; two
+    /// catalog plates closer than half of this are ambiguous and unmatched.
+    static let plateDiameterToleranceMeters = 0.02
+    /// Plausible plate-face diameters; contours outside are gym clutter.
+    static let plateDiameterRangeMeters = 0.15 ... 0.52
+
+    // MARK: Personalized depth (vs the body scan's unloaded deep hold)
+    /// Loaded bottoms within this many degrees of the scan's deep-hold
+    /// reading count as the lifter's full depth.
+    static let depthReferenceMarginDegrees = 6.0
+    /// Scan depth minus the set's median bottom beyond this = "depth in
+    /// reserve": the range demonstrably exists, the lifter isn't using it.
+    static let depthReserveDegrees = 10.0
+
     // MARK: Torso lean at the bottom (degrees from vertical).
     // High-bar standard: torso close to vertical (a deep upright squat sits
     // around 25–35°), so lean is caught early.

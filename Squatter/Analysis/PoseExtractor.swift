@@ -310,8 +310,9 @@ enum PoseExtractor {
     }
 
     /// Depth map value at a Vision-normalized point (bottom-left origin), in
-    /// meters; nil for LiDAR holes.
-    private static func depthValue(_ depthData: AVDepthData, x: Double, y: Double) -> Double? {
+    /// meters; nil for LiDAR holes. Internal: `PlateDetector` samples the
+    /// same sidecar maps at the plate faces.
+    static func depthValue(_ depthData: AVDepthData, x: Double, y: Double) -> Double? {
         guard depthData.depthDataType == kCVPixelFormatType_DepthFloat16 else { return nil }
         let map = depthData.depthDataMap
         CVPixelBufferLockBaseAddress(map, .readOnly)

@@ -61,13 +61,23 @@ Plate identity comes from two independent features:
 
 ## Phasing
 
-- **Phase 1 (shipped):** manual `weightKg` entry feeding the LVP. Add: save
-  the selected setup keyframe with each session to build a plate-image
-  corpus from real gym footage.
-- **Phase 2:** color-coded competition/bumper sets via the pipeline above,
-  face-on view only, velocity cross-check wired in.
-- **Phase 3:** black-plate stacks (edge-on band counting + depth), collar
-  detection, per-manufacturer thickness calibration.
+- **Phase 1 (shipped):** manual `weightKg` entry feeding the LVP.
+- **Phase 2 (shipped, diameter-first):** implemented as `PlateDetector` +
+  `PlateCatalog` + `PlatePickerView`. Design deviation from the original
+  color plan: the target gym stocks all-black plates, so recognition is
+  **diameter-only** against a *user-taught catalog* (weight + diameter per
+  plate; unknown detected diameters open a teach sheet — the system
+  measures, the user names the weight). The detector reports plate
+  *classes* seen on the bar, never counts (identical plates stack
+  invisibly); matched classes preselect chips in a per-side plate
+  calculator and the user sets counts. Plate depth is sampled from the
+  sidecar at each sleeve (the near/far sleeve differ by ~1 m at 45°), and
+  diameters are measured on the ellipse's vertical axis (yaw-invariant),
+  pitch-corrected. Untuned against real footage yet — gates are
+  conservative, silence is the failure mode.
+- **Phase 3:** contour-gate tuning on real recordings, stack counting via
+  sleeve occupancy, collar detection, velocity cross-check
+  (`LoadVelocityProfile` inversion) to flag implausible entries.
 
 ## Non-goals / assumptions
 

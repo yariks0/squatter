@@ -149,6 +149,46 @@ import simd
         #expect(analysis.findings.contains { $0.title == "Good depth" })
     }
 
+    /// A mobility-limited lifter whose scan shows +2° available: reaching
+    /// near that unloaded max counts as their full depth instead of being
+    /// nagged toward an impossible +12°.
+    @Test func depthIsJudgedAgainstTheLiftersOwnScan() {
+        var squat = SyntheticSquat(maxFemurAngle: 95)  // bottoms ≈ +5°
+        squat.metersPerImageHeight = 2.2
+        let profile = BodyGeometryProfile(
+            metric: MetricBodyGeometry(
+                femurMeters: Double(squat.femurLength),
+                shinMeters: Double(squat.shinLength),
+                quality: 0.01,
+                deepestHipBelowKneeDegrees: 2
+            ),
+            scannedAt: .now
+        )
+        let personalized = SquatAnalyzer.analyze(squat.series(), profile: profile)
+        #expect(personalized.findings.contains { $0.title == "Good depth" })
+        let absolute = SquatAnalyzer.analyze(squat.series())
+        #expect(absolute.findings.contains { $0.title == "Close to full depth" })
+    }
+
+    /// The scan proves +25° exists; loaded bottoms at ~+5° leave depth on
+    /// the table — and reaching the absolute standard is still demanded.
+    @Test func depthInReserveIsCalledOut() {
+        var squat = SyntheticSquat(maxFemurAngle: 95)
+        squat.metersPerImageHeight = 2.2
+        let profile = BodyGeometryProfile(
+            metric: MetricBodyGeometry(
+                femurMeters: Double(squat.femurLength),
+                shinMeters: Double(squat.shinLength),
+                quality: 0.01,
+                deepestHipBelowKneeDegrees: 25
+            ),
+            scannedAt: .now
+        )
+        let analysis = SquatAnalyzer.analyze(squat.series(), profile: profile)
+        #expect(analysis.findings.contains { $0.title == "Depth in reserve" })
+        #expect(analysis.findings.contains { $0.title == "Close to full depth" })
+    }
+
     /// A noisy metric scan must not anchor anything.
     @Test func noisyMetricScanIsRejected() {
         var squat = SyntheticSquat(maxFemurAngle: 110)

@@ -16,6 +16,7 @@ struct AttemptReviewView: View {
     @State private var trimEnd: TimeInterval = 0
     @State private var activity: ActivityType
     @State private var weightText = ""
+    @State private var detectedDiameters: [Double] = []
 
     /// Shortest analyzable window — roughly one slow rep.
     private static let minimumWindow: TimeInterval = 2
@@ -64,6 +65,8 @@ struct AttemptReviewView: View {
 
             weightField
 
+            PlatePickerView(weightText: $weightText, detectedDiameters: detectedDiameters)
+
             Button {
                 if let weight = enteredWeightKg {
                     UserDefaults.standard.set(weight, forKey: Self.lastWeightKey(for: activity))
@@ -89,6 +92,13 @@ struct AttemptReviewView: View {
             trimEnd = duration
             prefillWeight()
             player.play()
+            // Plate recognition off the setup frames — suggestion only, the
+            // field stays the user's.
+            if let detection = await PlateDetector.detect(
+                videoURL: videoURL, depthSidecarURL: depthSidecarURL
+            ) {
+                detectedDiameters = detection.diametersMeters
+            }
         }
         .onChange(of: activity) { prefillWeight() }
         .onDisappear { player.pause() }

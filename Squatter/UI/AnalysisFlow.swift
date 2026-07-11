@@ -32,7 +32,9 @@ final class AnalysisViewModel {
                     }
                 }
             )
-            let analysis = SquatAnalyzer.analyze(series, activity: activity)
+            let analysis = SquatAnalyzer.analyze(
+                series, activity: activity, profile: BodyGeometryProfileStore.load()
+            )
             phase = .done(analysis)
             onFinished(analysis)
         } catch {

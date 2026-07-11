@@ -3,26 +3,6 @@ import Testing
 import simd
 @testable import Squatter
 
-/// The real-footage artifact: at depth Vision projects the pelvis too high —
-/// the hip crease disappears between thigh and torso. Model space is
-/// root-anchored, so a raised pelvis reads as every non-pelvis joint sliding
-/// down while root and hips stay put.
-private func withHipRiseBias(_ series: JointSeries, riseMeters: Float) -> JointSeries {
-    let signal = RepSegmenter.liftSignal(series, activity: .squat)
-    guard let top = signal.max(), let bottom = signal.min(), top - bottom > 1e-6
-    else { return series }
-    let pelvis: Set<BodyJoint> = [.root, .leftHip, .rightHip]
-    var result = series
-    for index in result.frames.indices {
-        let depth = Float((top - signal[index]) / (top - bottom))
-        let shift = SIMD3<Float>(0, riseMeters * depth, 0)
-        for joint in result.frames[index].positions.keys where !pelvis.contains(joint) {
-            result.frames[index].positions[joint]! -= shift
-        }
-    }
-    return result
-}
-
 @Suite struct BodyGeometryTests {
     @Test func scanMeasuresStandingBoneLengths() throws {
         let squat = SyntheticSquat()
@@ -36,70 +16,113 @@ private func withHipRiseBias(_ series: JointSeries, riseMeters: Float) -> JointS
         #expect(abs(try #require(scanned.length(.leftHip, .rightHip)) - 2 * squat.hipHalfWidth) < 0.005)
     }
 
-    @Test func hipRiseBiasReadsShallowWithoutCorrection() {
-        let squat = SyntheticSquat(maxFemurAngle: 100)
-        let truth = referenceMetrics(for: squat.series())
-        let biased = referenceMetrics(for: withHipRiseBias(squat.series(), riseMeters: 0.07))
-        // Documents the bug: a clearly below-parallel squat loses several
-        // degrees of measured flexion once the pelvis drifts up.
-        #expect(biased.kneeFlexionDegrees > truth.kneeFlexionDegrees + 5)
-        #expect(biased.hipBelowKneeDegrees < truth.hipBelowKneeDegrees - 5)
+    @Test func metricScanMeasuresTrueLengths() throws {
+        var squat = SyntheticSquat()
+        squat.metersPerImageHeight = 2.2
+        let metric = try #require(SquatAnalyzer.metricScan(of: squat.series(), activity: .squat))
+        #expect(abs(metric.femurMeters - Double(squat.femurLength)) < 0.01)
+        #expect(abs(metric.shinMeters - Double(squat.shinLength)) < 0.01)
+        #expect(metric.quality < 0.02)
     }
 
-    @Test func correctionRestoresDepthMetrics() throws {
-        let squat = SyntheticSquat(maxFemurAngle: 110)
+    /// Vision's real-footage failure mode (measured on pulled sessions): the
+    /// 3D skeleton keeps perfect bone lengths but is *posed* too shallow at
+    /// the bottom. The 2D image points see the true pose; the metric anchor
+    /// recovers it.
+    @Test func imageAnchorRecoversPoseBiasedDepth() throws {
+        var squat = SyntheticSquat(maxFemurAngle: 110)
+        squat.metersPerImageHeight = 2.2
         let truth = SquatAnalyzer.analyze(squat.series())
-        let corrected = SquatAnalyzer.analyze(withHipRiseBias(squat.series(), riseMeters: 0.07))
+
+        squat.modelPoseShallowBias = 25
+        var blind = squat
+        blind.metersPerImageHeight = 0
+        let uncorrected = SquatAnalyzer.analyze(blind.series())
+        // Without image data the biased pose is self-consistent and reads
+        // shallow — no model-space constraint can see the error.
+        #expect(uncorrected.reps[0].hipBelowKneeDegrees
+            < truth.reps[0].hipBelowKneeDegrees - 15)
+
+        let corrected = SquatAnalyzer.analyze(squat.series())
+        #expect(corrected.metricGeometry != nil)
         #expect(corrected.reps.count == truth.reps.count)
         for (fixed, real) in zip(corrected.reps, truth.reps) {
-            #expect(abs(fixed.kneeFlexionDegrees - real.kneeFlexionDegrees) < 3)
-            #expect(abs(fixed.hipBelowKneeDegrees - real.hipBelowKneeDegrees) < 3)
-            #expect(abs(fixed.depthFraction - real.depthFraction) < 0.06)
+            #expect(abs(fixed.hipBelowKneeDegrees - real.hipBelowKneeDegrees) < 4)
+            #expect(abs(fixed.kneeFlexionDegrees - real.kneeFlexionDegrees) < 5)
         }
-        // The whole point: the full-depth squat no longer reads shallow.
         #expect(corrected.findings.contains { $0.title == "Good depth" })
     }
 
-    @Test func correctionIsANoOpOnCleanTracking() {
+    /// A tilted camera or a 2D hip glitch makes the image read *shallower*
+    /// than the model. The 3D pose never exaggerates depth, so the anchor
+    /// must never shallow it — a real pulled session lost 30° on good reps
+    /// before this gate existed.
+    @Test func imageAnchorNeverShallowsThePose() {
+        var squat = SyntheticSquat(maxFemurAngle: 95)
+        // Model 15° deeper than what the image claims.
+        squat.modelPoseShallowBias = -15
+        let modelOnly = SquatAnalyzer.analyze(squat.series())
+        squat.metersPerImageHeight = 2.2
+        let withImage = SquatAnalyzer.analyze(squat.series())
+        #expect(withImage.reps.count == modelOnly.reps.count)
+        for (image, model) in zip(withImage.reps, modelOnly.reps) {
+            #expect(abs(image.hipBelowKneeDegrees - model.hipBelowKneeDegrees) < 1.5)
+        }
+    }
+
+    /// The anchor can't conjure depth that isn't there: a genuinely shallow
+    /// squat with agreeing image data still reads shallow.
+    @Test func imageAnchorDoesNotFakeDepthOnShallowSquats() {
+        var squat = SyntheticSquat(maxFemurAngle: 50)
+        squat.metersPerImageHeight = 2.2
+        let analysis = SquatAnalyzer.analyze(squat.series())
+        #expect(analysis.findings.contains { $0.title == "Shallow depth" })
+    }
+
+    @Test func analysisIsUnchangedWithoutImageData() {
         let squat = SyntheticSquat()
         let raw = squat.series()
-        let uncorrected = referenceMetrics(for: raw)
-        let analyzed = SquatAnalyzer.analyze(raw)
-        #expect(abs(analyzed.reps[0].kneeFlexionDegrees - uncorrected.kneeFlexionDegrees) < 1)
-        #expect(abs(analyzed.reps[0].hipBelowKneeDegrees - uncorrected.hipBelowKneeDegrees) < 1)
-    }
-
-    @Test func correctionDoesNotFakeDepthOnShallowSquats() {
-        let squat = SyntheticSquat(maxFemurAngle: 50)
-        let corrected = SquatAnalyzer.analyze(withHipRiseBias(squat.series(), riseMeters: 0.05))
-        #expect(corrected.findings.contains {
-            $0.title == "Shallow depth"
-        })
-    }
-
-    @Test func correctedSkeletonKeepsScannedLengths() throws {
-        let squat = SyntheticSquat(maxFemurAngle: 100)
-        let biased = withHipRiseBias(squat.series(), riseMeters: 0.07)
-        let analysis = SquatAnalyzer.analyze(biased)
-        let geometry = try #require(analysis.bodyGeometry)
-        // At the deepest frame of the corrected series, the femur is back at
-        // its scanned length instead of stretched by the raised pelvis.
-        let signal = RepSegmenter.liftSignal(analysis.series, activity: .squat)
-        let bottomFrame = analysis.series.frames[
-            signal.firstIndex(of: signal.min() ?? 0) ?? 0
-        ]
-        let hip = try #require(bottomFrame.position(.leftHip))
-        let knee = try #require(bottomFrame.position(.leftKnee))
-        let femur = try #require(geometry.length(.leftHip, .leftKnee))
-        #expect(abs(simd_length(hip - knee) - femur) < 0.01)
-    }
-
-    /// Metrics through smoothing and segmentation but *without* the
-    /// geometry correction — the pre-correction pipeline, as a baseline.
-    private func referenceMetrics(for raw: JointSeries) -> RepMetrics {
         let smoothed = JointSeriesSmoother.smoothed(raw, window: AnalysisTuning.smoothingWindow)
         let reps = RepSegmenter.segment(smoothed, activity: .squat)
-        let metrics = MetricsCalculator.metrics(for: reps, in: smoothed, activity: .squat)
-        return metrics[0]
+        let baseline = MetricsCalculator.metrics(for: reps, in: smoothed, activity: .squat)
+        let analyzed = SquatAnalyzer.analyze(raw)
+        #expect(analyzed.reps.count == baseline.count)
+        #expect(abs(analyzed.reps[0].kneeFlexionDegrees - baseline[0].kneeFlexionDegrees) < 0.01)
+        #expect(abs(analyzed.reps[0].hipBelowKneeDegrees - baseline[0].hipBelowKneeDegrees) < 0.01)
+    }
+
+    @Test func preScanProfileOverridesSessionScan() throws {
+        var squat = SyntheticSquat(maxFemurAngle: 110)
+        squat.metersPerImageHeight = 2.2
+        squat.modelPoseShallowBias = 25
+        let profile = BodyGeometryProfile(
+            metric: MetricBodyGeometry(
+                femurMeters: Double(squat.femurLength),
+                shinMeters: Double(squat.shinLength),
+                quality: 0.01
+            ),
+            scannedAt: .now
+        )
+        let analysis = SquatAnalyzer.analyze(squat.series(), profile: profile)
+        #expect(analysis.metricGeometry == profile.metric)
+        #expect(analysis.findings.contains { $0.title == "Good depth" })
+    }
+
+    /// A noisy metric scan must not anchor anything.
+    @Test func noisyMetricScanIsRejected() {
+        var squat = SyntheticSquat(maxFemurAngle: 110)
+        squat.metersPerImageHeight = 2.2
+        squat.modelPoseShallowBias = 35
+        let profile = BodyGeometryProfile(
+            metric: MetricBodyGeometry(
+                femurMeters: Double(squat.femurLength),
+                shinMeters: Double(squat.shinLength),
+                quality: AnalysisTuning.geometryScanQualityGate * 2
+            ),
+            scannedAt: .now
+        )
+        let analysis = SquatAnalyzer.analyze(squat.series(), profile: profile)
+        // Biased pose stays shallow because the anchor never engaged.
+        #expect(analysis.findings.contains { $0.title == "Shallow depth" })
     }
 }

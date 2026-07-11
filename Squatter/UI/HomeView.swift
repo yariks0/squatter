@@ -19,6 +19,9 @@ struct HomeView: View {
         case review(RecordingResult, ActivityType)
         case analyze(RecordingResult, ActivityType)
         case attempt(fileName: String)
+        case bodyScanGuide
+        case bodyScanRecord
+        case bodyScanResult(RecordingResult)
     }
 
     @State private var choosingActivity = false
@@ -79,6 +82,13 @@ struct HomeView: View {
                 ToolbarItem(placement: .topBarLeading) {
                     KodoEmblem(size: 36)
                 }
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        path.append(Route.bodyScanGuide)
+                    } label: {
+                        Label("Body scan", systemImage: "person.and.background.dotted")
+                    }
+                }
             }
             .navigationDestination(for: Route.self) { route in
                 switch route {
@@ -108,6 +118,16 @@ struct HomeView: View {
                                 Label("Home", systemImage: "house.fill")
                             }
                         }
+                    }
+                case .bodyScanGuide:
+                    BodyScanGuideView { path.append(Route.bodyScanRecord) }
+                case .bodyScanRecord:
+                    RecordView(activity: .squat) { result in
+                        path.append(Route.bodyScanResult(result))
+                    }
+                case .bodyScanResult(let recording):
+                    BodyScanResultView(recording: recording) {
+                        path = NavigationPath()
                     }
                 case .attempt(let fileName):
                     if let directory = try? FileLocations.recordingsDirectory() {

@@ -17,6 +17,11 @@ struct SquatAnalysis: Codable, Sendable {
     /// by `SkeletonCorrector`; nil when the scan failed (and the series is
     /// then uncorrected). Optional so older sessions decode.
     var bodyGeometry: BodyGeometry? = nil
+    /// Metric geometry the pose was anchored to — the pre-scan profile when
+    /// one exists, else measured from this session's standing frames. nil =
+    /// no anchoring (no LiDAR, or the scan was too noisy). Optional so older
+    /// sessions decode.
+    var metricGeometry: MetricBodyGeometry? = nil
 
     var kind: ActivityType { activity ?? .squat }
 }
@@ -24,7 +29,10 @@ struct SquatAnalysis: Codable, Sendable {
 /// End-to-end analysis: smooth → scan body geometry + correct the skeleton
 /// → segment reps → metrics → coaching findings.
 enum SquatAnalyzer {
-    static func analyze(_ raw: JointSeries, activity: ActivityType = .squat) -> SquatAnalysis {
+    static func analyze(
+        _ raw: JointSeries, activity: ActivityType = .squat,
+        profile: BodyGeometryProfile? = nil
+    ) -> SquatAnalysis {
         let smoothed = JointSeriesSmoother.smoothed(raw, window: AnalysisTuning.smoothingWindow)
         // Joint angles are only as good as the skeleton: when bone lengths
         // jitter, every form rule fires on noise, so a single honest finding
@@ -38,8 +46,13 @@ enum SquatAnalyzer {
         // without real footage proving it out.
         let geometry = trackable && activity == .squat
             ? scanGeometry(of: smoothed, activity: activity) : nil
-        let series = geometry.map { SkeletonCorrector.corrected(smoothed, geometry: $0) }
-            ?? smoothed
+        // The pre-scan profile wins over the session's own standing frames:
+        // it was measured in a controlled setup, not in a gym corner.
+        let metric = geometry == nil ? nil
+            : profile?.metric ?? metricScan(of: smoothed, activity: activity)
+        let series = geometry.map {
+            SkeletonCorrector.corrected(smoothed, geometry: $0, metric: metric)
+        } ?? smoothed
         let reps = RepSegmenter.segment(series, activity: activity)
         let metrics = MetricsCalculator.metrics(for: reps, in: series, activity: activity)
         let findings = trackable
@@ -54,8 +67,16 @@ enum SquatAnalyzer {
             series: series,
             activity: activity,
             trackingJitter: jitter.isFinite ? jitter : nil,
-            bodyGeometry: geometry
+            bodyGeometry: geometry,
+            metricGeometry: metric
         )
+    }
+
+    /// Metric bone lengths from a series' standing frames — the in-the-wild
+    /// fallback when no pre-scan profile exists, and what the scan flow runs
+    /// over a dedicated standing recording.
+    static func metricScan(of series: JointSeries, activity: ActivityType) -> MetricBodyGeometry? {
+        MetricBodyGeometry.measure(from: standingFrames(of: series, activity: activity))
     }
 
     /// The body scan: every set starts (or locks out) standing, where Vision
@@ -65,12 +86,17 @@ enum SquatAnalyzer {
     /// (e.g. bench with the legs cropped) measures nothing and runs
     /// uncorrected.
     static func scanGeometry(of series: JointSeries, activity: ActivityType) -> BodyGeometry? {
+        BodyGeometry.measure(from: standingFrames(of: series, activity: activity))
+    }
+
+    private static func standingFrames(
+        of series: JointSeries, activity: ActivityType
+    ) -> [JointFrame] {
         let signal = RepSegmenter.liftSignal(series, activity: activity)
         let baseline = RepSegmenter.standingBaseline(of: signal)
-        guard baseline > 0 else { return nil }
-        let standing = zip(series.frames, signal)
+        guard baseline > 0 else { return [] }
+        return zip(series.frames, signal)
             .filter { $0.1 >= baseline * AnalysisTuning.geometryScanFraction }
             .map(\.0)
-        return BodyGeometry.measure(from: standing)
     }
 }

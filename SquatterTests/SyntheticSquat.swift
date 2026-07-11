@@ -29,6 +29,13 @@ struct SyntheticSquat {
     var frameRate = 15.0
     var noise = 0.0
     var seed: UInt64 = 7
+    /// > 0 emits image points (orthographic side view) and a LiDAR metric
+    /// scale on every frame — meters spanned by the image height.
+    var metersPerImageHeight: Float = 0
+    /// Degrees knocked off the *model's* femur angle at the bottom while the
+    /// image points keep the true pose — Vision's real-footage failure mode:
+    /// an internally consistent skeleton posed too shallow.
+    var modelPoseShallowBias = 0.0
 
     let femurLength: Float = 0.45
     let shinLength: Float = 0.42
@@ -65,7 +72,43 @@ struct SyntheticSquat {
     private func frame(at time: Double, squatProgress: Double, rng: inout SplitMix64) -> JointFrame {
         // Ease for a natural velocity profile.
         let eased = 0.5 - 0.5 * cos(squatProgress * .pi)
-        let femurAngle = Float(eased * maxFemurAngle * .pi / 180)
+        let trueFemurAngle = Float(eased * maxFemurAngle * .pi / 180)
+        let modelFemurAngle = Float(eased * max(0, maxFemurAngle - modelPoseShallowBias) * .pi / 180)
+        var positions = skeleton(at: time, eased: eased, femurAngle: modelFemurAngle)
+
+        var imagePoints: [BodyJoint: SIMD2<Float>] = [:]
+        if metersPerImageHeight > 0 {
+            // The camera sees the true pose. Orthographic side view: world
+            // height over the (planted) ankles maps straight to image y.
+            let truth = skeleton(at: time, eased: eased, femurAngle: trueFemurAngle)
+            let ankles = [truth[.leftAnkle], truth[.rightAnkle]].compactMap { $0 }
+            let floor = ankles.map(\.y).min() ?? 0
+            for (joint, position) in truth {
+                imagePoints[joint] = SIMD2(
+                    position.z / metersPerImageHeight + 0.5,
+                    (position.y - floor) / metersPerImageHeight + 0.05
+                )
+            }
+        }
+
+        if noise > 0 {
+            for key in positions.keys {
+                positions[key]! += SIMD3(
+                    Float(rng.nextGaussian() * noise),
+                    Float(rng.nextGaussian() * noise),
+                    Float(rng.nextGaussian() * noise)
+                )
+            }
+        }
+        return JointFrame(
+            time: time, positions: positions, imagePoints: imagePoints,
+            metersPerImageHeight: metersPerImageHeight > 0 ? metersPerImageHeight : nil
+        )
+    }
+
+    private func skeleton(
+        at time: Double, eased: Double, femurAngle: Float
+    ) -> [BodyJoint: SIMD3<Float>] {
         let shinAngle = min(femurAngle * 0.45, Float(35.0 * .pi / 180))
         let torsoAngle = Float(eased * maxTorsoLean * .pi / 180)
         // Valgus appears in the deep half of the movement.
@@ -104,17 +147,7 @@ struct SyntheticSquat {
             positions[BodyJoint(rawValue: "\(prefix)Shoulder")!] =
                 positions[.centerShoulder]! + SIMD3(sign * 0.18, 0, 0)
         }
-
-        if noise > 0 {
-            for key in positions.keys {
-                positions[key]! += SIMD3(
-                    Float(rng.nextGaussian() * noise),
-                    Float(rng.nextGaussian() * noise),
-                    Float(rng.nextGaussian() * noise)
-                )
-            }
-        }
-        return JointFrame(time: time, positions: positions, imagePoints: [:])
+        return positions
     }
 }
 

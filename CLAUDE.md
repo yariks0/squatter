@@ -29,10 +29,16 @@ iOS 17 target (some UI is `@available(iOS 18)`), tests use Swift Testing.
   sidecar via `DepthSidecar`), `FramingChecker` live full-body check.
 - `Squatter/Analysis/` — the pipeline: `PoseExtractor` (video → `JointSeries`;
   resumes if the decoder dies mid-file) → `JointSeriesSmoother` →
-  `BodyGeometry` scan + `SkeletonCorrector` (squat only: standing-frame bone
-  lengths pull the pelvis Vision mis-projects at depth back down) →
+  `SkeletonCorrector` (squat + LiDAR only: 2D image points × metric scale ÷
+  scanned metric femur give the femur's true elevation; the pelvis is
+  re-posed to it, deepen-only, and only when the model is already deep) →
   `RepSegmenter` → `MetricsCalculator` → `FormRules` findings, gated by
   `TrackingQuality`. **All thresholds live in `AnalysisTuning.swift`.**
+- Body geometry: `BodyGeometry` (model-space bone lengths) and
+  `MetricBodyGeometry` (real meters, from standing-frame image drops ×
+  LiDAR scale) are scanned from each session's standing frames; a
+  `BodyGeometryProfile` from the dedicated body-scan flow (`BodyScanView`,
+  stored as JSON in Application Support) overrides the in-session estimate.
 - `Squatter/Coach/` — Anthropic API coaching: `CoachPrompt` (system prompt
   embeds live thresholds; user turn packs metrics + keyframes), `CoachClient`,
   `CoachReport` (mirrors `CoachPrompt.outputSchema` — keep in sync).
@@ -53,6 +59,12 @@ iOS 17 target (some UI is `@available(iOS 18)`), tests use Swift Testing.
 - Image-space points come from the 2D pose request; the 3D observation's
   `pointInImage` re-projects through an assumed camera and drifts ~50 px.
 - Vision RGB `bodyHeight` is a ~1.80 m prior, not a measurement.
+- Vision's 3D pose at deep-squat bottoms is **internally consistent but
+  posed too shallow** (pelvis high, bone lengths hold to ~0.02%): length
+  constraints can't see the error; only the 2D image points (which follow
+  real pixels) reveal it. Trust the *deeper* of model vs image — the model
+  never exaggerates depth, the image goes shallow under camera pitch or 2D
+  glitches.
 - `TrackingQuality.boneLengthJitter` gates form rules (> 0.01 → single
   "tracking unstable" finding). Don't tune segmentation on jittery footage —
   clean squat sessions sit at 0.0003–0.003.

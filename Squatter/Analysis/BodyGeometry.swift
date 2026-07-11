@@ -53,3 +53,57 @@ struct BodyGeometry: Codable, Sendable, Equatable {
         return BodyGeometry(bones: bones)
     }
 }
+
+/// Bone lengths in *real* meters, measured camera-side: a standing joint's
+/// image-y drop times the frame's LiDAR metric scale is its true vertical
+/// extent, and standing femurs and shins are vertical. Unlike model-space
+/// lengths (which ride Vision's 1.80 m body prior and its pose estimate),
+/// these come from the 2D detector, which follows actual pixels — so they
+/// can anchor the pose where the 3D model drifts. Best measured by a
+/// dedicated standing scan in a controlled setup (`BodyGeometryProfile`);
+/// a session's own standing frames are the fallback.
+struct MetricBodyGeometry: Codable, Sendable, Equatable {
+    var femurMeters: Double
+    var shinMeters: Double
+    /// Median absolute deviation of the femur samples over their median —
+    /// the scan's noise level. Real scans sit at 0.02–0.06; above
+    /// `AnalysisTuning.geometryScanQualityGate` the scan is unusable.
+    var quality: Double
+
+    /// Pooled (both sides) medians over standing frames with a LiDAR scale.
+    /// Standing = the bones hang vertical, so the image-y drop *is* the
+    /// length. nil without enough clean samples or outside human range.
+    static func measure(from frames: [JointFrame]) -> MetricBodyGeometry? {
+        var femurs: [Double] = []
+        var shins: [Double] = []
+        for frame in frames {
+            guard let scale = frame.metersPerImageHeight else { continue }
+            for (hip, knee, ankle) in [
+                (BodyJoint.leftHip, BodyJoint.leftKnee, BodyJoint.leftAnkle),
+                (.rightHip, .rightKnee, .rightAnkle),
+            ] {
+                if let h = frame.imagePoints[hip], let k = frame.imagePoints[knee] {
+                    let drop = Double((h.y - k.y) * scale)
+                    if drop > 0.1 { femurs.append(drop) }
+                }
+                if let k = frame.imagePoints[knee], let a = frame.imagePoints[ankle] {
+                    let drop = Double((k.y - a.y) * scale)
+                    if drop > 0.1 { shins.append(drop) }
+                }
+            }
+        }
+        guard femurs.count >= AnalysisTuning.geometryMinimumScanFrames,
+              shins.count >= AnalysisTuning.geometryMinimumScanFrames
+        else { return nil }
+        let femur = median(of: femurs)
+        let shin = median(of: shins)
+        guard AnalysisTuning.geometryFemurRangeMeters.contains(femur) else { return nil }
+        let quality = median(of: femurs.map { abs($0 - femur) }) / femur
+        return MetricBodyGeometry(femurMeters: femur, shinMeters: shin, quality: quality)
+    }
+
+    private static func median(of values: [Double]) -> Double {
+        let sorted = values.sorted()
+        return sorted[sorted.count / 2]
+    }
+}

@@ -41,10 +41,22 @@ enum AnalysisTuning {
     /// Standing frames (and per-bone samples) required before the scan is
     /// trusted; below this the session runs uncorrected.
     static let geometryMinimumScanFrames = 12
-    /// Length-constraint relaxation rounds per frame. The pelvis–knee and
-    /// pelvis–spine–shoulder chains are short; this converges well past
-    /// measurement precision.
-    static let geometrySolverIterations = 12
+    /// Metric femur scans noisier than this (MAD/median of the standing
+    /// samples) can't be trusted to anchor the pose. Real in-session scans
+    /// measured 0.02–0.06; a controlled pre-scan should sit near 0.02.
+    static let geometryScanQualityGate = 0.08
+    /// Sanity range for a scanned metric femur; outside it the 2D detector
+    /// grabbed something that isn't a standing leg.
+    static let geometryFemurRangeMeters = 0.25 ... 0.70
+    /// Hard cap on the per-frame pelvis shift from the image anchor —
+    /// real mis-projections measured ~0.1–0.15 m of equivalent shift.
+    static let geometryAnchorMaxShiftMeters: Float = 0.25
+    /// The anchor engages only when the model femur's depth sine (+1 = hip a
+    /// femur-length below the knee) is above this — i.e. the model already
+    /// sits in the bottom half of a squat, the only place the pelvis
+    /// mis-projection exists. Keeps 2D glitches elsewhere in the set from
+    /// deepening standing frames into phantom reps.
+    static let geometryAnchorModelSineFloor: Float = -0.5
 
     // MARK: Tempo
     /// Below this the descent is a free fall rather than a controlled ~1–2 s

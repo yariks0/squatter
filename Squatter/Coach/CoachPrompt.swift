@@ -189,9 +189,11 @@ enum CoachPrompt {
         \(Int(AnalysisTuning.elbowLiftWarningDegrees))° warns and \
         \(Int(AnalysisTuning.elbowLiftRiskDegrees))° is a risk.
         - Stance: heels around shoulder width, toes out ~30°. The metric is \
-        ankle separation over shoulder width — below \
-        \(AnalysisTuning.stanceNarrowRatio) is too narrow, above \
-        \(AnalysisTuning.stanceWideRatio) too wide for high-bar work.
+        ankle separation over the lifter's own shoulder width, measured in \
+        the camera image — below \(AnalysisTuning.stanceNarrowRatio) is too \
+        narrow, above \(AnalysisTuning.stanceWideRatio) too wide for \
+        high-bar work. Missing = the camera was side-on and stance was \
+        not judged.
         - The bottom is a held position: pelvis drift there beyond \
         \(Int(AnalysisTuning.bottomShiftWarningRatio * 100))% of hip width \
         ("butt wiggle") is a control fault.

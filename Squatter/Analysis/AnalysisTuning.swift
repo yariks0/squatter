@@ -70,12 +70,16 @@ enum AnalysisTuning {
     // MARK: Symmetry (left/right knee-angle difference at the bottom, degrees)
     static let asymmetryWarningDegrees = 12.0
 
-    // MARK: Stance (ankle separation / shoulder width, measured standing at
-    // the start of a rep). High-bar standard: heels around shoulder width so
-    // the hips can sit between the legs — hip-width down to ~0.7 is fine,
-    // inside that is too narrow to reach depth upright.
-    static let stanceNarrowRatio = 0.7
-    static let stanceWideRatio = 1.7
+    // MARK: Stance (ankle separation / shoulder width in image x, measured
+    // standing at the start of a rep — the lifter's own proportions, not the
+    // 3D model's fixed-width shoulders). High-bar standard: heels around
+    // shoulder width so the hips can sit between the legs; real correct
+    // stances measured 0.9–1.3 on pulled sessions.
+    static let stanceNarrowRatio = 0.6
+    static let stanceWideRatio = 1.5
+    /// Shoulder image span below this fraction of the femur's image length
+    /// means the camera is side-on: stance is unmeasurable and unjudged.
+    static let stanceViewGateRatio: Float = 0.5
 
     // MARK: Bottom stability (horizontal pelvis drift while at the bottom,
     // as a fraction of hip width). A held bottom position keeps the pelvis

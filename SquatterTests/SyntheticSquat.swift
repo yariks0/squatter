@@ -29,9 +29,11 @@ struct SyntheticSquat {
     var frameRate = 15.0
     var noise = 0.0
     var seed: UInt64 = 7
-    /// > 0 emits image points (orthographic side view) and a LiDAR metric
+    /// > 0 emits image points (orthographic projection) and a LiDAR metric
     /// scale on every frame — meters spanned by the image height.
     var metersPerImageHeight: Float = 0
+    /// Camera bearing for the image projection: 0 = frontal, 90 = side view.
+    var imageYawDegrees = 0.0
     /// Degrees knocked off the *model's* femur angle at the bottom while the
     /// image points keep the true pose — Vision's real-footage failure mode:
     /// an internally consistent skeleton posed too shallow.
@@ -83,9 +85,10 @@ struct SyntheticSquat {
             let truth = skeleton(at: time, eased: eased, femurAngle: trueFemurAngle)
             let ankles = [truth[.leftAnkle], truth[.rightAnkle]].compactMap { $0 }
             let floor = ankles.map(\.y).min() ?? 0
+            let yaw = Float(imageYawDegrees * .pi / 180)
             for (joint, position) in truth {
                 imagePoints[joint] = SIMD2(
-                    position.z / metersPerImageHeight + 0.5,
+                    (position.x * cos(yaw) + position.z * sin(yaw)) / metersPerImageHeight + 0.5,
                     (position.y - floor) / metersPerImageHeight + 0.05
                 )
             }

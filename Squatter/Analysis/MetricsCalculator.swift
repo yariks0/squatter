@@ -451,15 +451,33 @@ enum MetricsCalculator {
     }
 
     /// Ankle separation over shoulder separation, taken standing at the rep
-    /// start. Roughly 1.0 = heels at shoulder width, ~0.75 = hip width.
+    /// start; 1.0 = heels at shoulder width. Measured in image x from the 2D
+    /// detector: the 3D model's shoulder width is a near-constant ~0.34 m
+    /// prior on every session (it inflated real ratios ~40% and flagged
+    /// shoulder-width stances as wide), while the image spans are the
+    /// lifter's own proportions. Both spans are frontal-plane widths, so
+    /// their ratio is camera-yaw-invariant — until the view goes side-on,
+    /// where the spans collapse into noise and no honest stance judgment
+    /// exists: nil, and the rule stays silent.
     private static func stanceWidth(_ frame: JointFrame) -> Double? {
-        guard let leftAnkle = frame.position(.leftAnkle),
-              let rightAnkle = frame.position(.rightAnkle),
-              let leftShoulder = frame.position(.leftShoulder),
-              let rightShoulder = frame.position(.rightShoulder) else { return nil }
-        let shoulderWidth = simd_length(leftShoulder - rightShoulder)
-        guard shoulderWidth > 1e-6 else { return nil }
-        return Double(simd_length(leftAnkle - rightAnkle) / shoulderWidth)
+        guard let leftShoulder = frame.imagePoints[.leftShoulder],
+              let rightShoulder = frame.imagePoints[.rightShoulder],
+              let leftAnkle = frame.imagePoints[.leftAnkle],
+              let rightAnkle = frame.imagePoints[.rightAnkle] else { return nil }
+        let shoulderSpan = abs(leftShoulder.x - rightShoulder.x)
+        // View gate: from the side the shoulder span shrinks well below the
+        // femur's image length; require a frontal-enough view.
+        let femurs = [
+            (frame.imagePoints[.leftHip], frame.imagePoints[.leftKnee]),
+            (frame.imagePoints[.rightHip], frame.imagePoints[.rightKnee]),
+        ].compactMap { hip, knee -> Float? in
+            guard let hip, let knee else { return nil }
+            return simd_length(hip - knee)
+        }
+        guard let femurSpan = femurs.max(), femurSpan > 1e-4,
+              shoulderSpan > femurSpan * AnalysisTuning.stanceViewGateRatio
+        else { return nil }
+        return Double(abs(leftAnkle.x - rightAnkle.x) / shoulderSpan)
     }
 
     /// Horizontal pelvis drift across the bottom window, as a fraction of hip

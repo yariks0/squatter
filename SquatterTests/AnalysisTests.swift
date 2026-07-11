@@ -111,7 +111,10 @@ struct MetricsTests {
     }
 
     @Test func stanceWidthMeasured() throws {
+        // Stance is judged from the 2D image spans, so the synthetic camera
+        // must be frontal enough and emitting image points.
         var generator = SyntheticSquat(repCount: 2)
+        generator.metersPerImageHeight = 2.2
         for (scale, expectNarrow, expectWide) in [(1.0, false, false), (0.5, true, false), (2.5, false, true)] {
             generator.stanceScale = scale
             for rep in metrics(generator) {
@@ -119,6 +122,17 @@ struct MetricsTests {
                 #expect((ratio < AnalysisTuning.stanceNarrowRatio) == expectNarrow)
                 #expect((ratio > AnalysisTuning.stanceWideRatio) == expectWide)
             }
+        }
+    }
+
+    /// From a side view the shoulder span collapses and stance cannot be
+    /// judged honestly — the metric must go silent instead of guessing.
+    @Test func stanceUnjudgedFromSideView() {
+        var generator = SyntheticSquat(repCount: 2, stanceScale: 2.5)
+        generator.metersPerImageHeight = 2.2
+        generator.imageYawDegrees = 90
+        for rep in metrics(generator) {
+            #expect(rep.stanceWidthRatio == nil)
         }
     }
 
@@ -195,6 +209,7 @@ struct FormRulesTests {
     @Test func narrowStanceFlagged() {
         var generator = SyntheticSquat(repCount: 3)
         generator.stanceScale = 0.5
+        generator.metersPerImageHeight = 2.2
         let analysis = analyze(generator)
         #expect(analysis.findings.contains { $0.title == "Stance too narrow" })
     }

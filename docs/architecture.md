@@ -9,6 +9,9 @@ this doc disagree, fix the doc in the same commit.
 ```
 UI (HomeView routes)
  ├─ SetupGuideView → RecordView ──(RecordingResult)──▶ AttemptReviewView
+ │        (live, while recording: FramingChecker → spoken framing gate;
+ │         LiveRepCounter, a 2D-image-signal rep state machine with its
+ │         thresholds in AnalysisTuning → SetVoice rep/fault callouts)
  │                                                     ├─ PlateDetector.detect (async, review-time)
  │                                                     └─ PlatePickerView ↔ PlateCatalog(Store)
  ├─ AttemptReviewView ──(RecordingResult, ActivityType)──▶ AnalysisView (AnalysisFlow.swift)
@@ -16,6 +19,11 @@ UI (HomeView routes)
  │          PoseExtractor.extract(video, depthSidecar) ──▶ JointSeries
  │          SquatAnalyzer.analyze(series, activity, profile: BodyGeometryProfileStore.load())
  │          └─▶ SquatAnalysis ──▶ ReportView / saved as WorkoutSession (SwiftData)
+ │                ReportView: PlayerOverlayView draws the skeleton, coloring
+ │                  faulted parts red via FormFaultDetector (per-frame checks
+ │                  with the FormRules thresholds); CoachSectionView →
+ │                  CoachClient (KeyframeExtractor rep-bottom JPEGs →
+ │                  Anthropic API), report cached by CoachReportStore
  ├─ BodyScanGuideView → RecordView → BodyScanResultView
  │        PoseExtractor.extract → SquatAnalyzer.profileScan → BodyGeometryProfile(Store)
  └─ SessionReportView (reopens saved sessions; can re-analyze)
@@ -31,6 +39,12 @@ SquatAnalyzer.analyze (pure, no I/O — the whole Analysis layer is UI-free):
   VelocityCalculator (inside Metrics)     (MCV/peak from barTrack × scale)
   FormRules.findings                      (+ depthReference from profile deep hold)
 ```
+
+Type→file exceptions (everything else lives in `<TypeName>.swift`):
+`JointSeriesSmoother` → `Smoothing.swift`; `PlatePickerView` →
+`PlateWeightView.swift`; `SessionReportView` → private in `HomeView.swift`;
+`AnalysisView`/`AnalysisViewModel` → `AnalysisFlow.swift`; `FrameFaults` →
+`FormFaultDetector.swift`.
 
 ## Pipeline stages: inputs, outputs, invariants
 
@@ -57,7 +71,13 @@ SquatAnalyzer.analyze (pure, no I/O — the whole Analysis layer is UI-free):
   **overrides** in-session scans. Saving a scan replaces it wholesale.
 - `Application Support/plate-catalog.json` → `PlateCatalog` (barWeightKg +
   `PlateSpec[]`: weight, diameter, optional `PlateColor`).
-- `UserDefaults`: `lastWeightKg.<activity>` prefill.
+- `Application Support/Recordings/<uuid>.mov` + `<uuid>.depth` (LiDAR
+  sidecar) — the recordings themselves, base-named by `FileLocations`.
+  `<uuid>.coach` beside them caches the fetched LLM report
+  (`CoachReportStore`) until the user regenerates it.
+- Anthropic API key: Keychain via `CoachKeyStore` — never UserDefaults,
+  source, or the binary.
+- `UserDefaults`: `lastWeightKg.<activity>` prefill; `SetVoice` enabled flag.
 - Dates in hand-written JSON: Swift default = seconds since 2001-01-01.
 
 ## Measured facts (do not re-derive; sourced from real device sessions)

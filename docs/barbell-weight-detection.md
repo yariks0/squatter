@@ -1,5 +1,9 @@
 # Automatic barbell weight detection — design
 
+> Design rationale and phasing only. Implementation truth (current gates and
+> behavior) lives in the `PlateDetector` row of `docs/architecture.md` —
+> update that, not this, when the code changes.
+
 Goal: prefill `WorkoutSession.weightKg` from the recording itself so the
 load–velocity profile and 1RM estimate work without manual entry. The bar is
 assumed to be a standard 20 kg bar (user-overridable setting; 15 kg women's

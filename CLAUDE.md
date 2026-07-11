@@ -42,11 +42,14 @@ checks" → `xcrun simctl shutdown all` and retry.
   evidence, deepen-only, only at depth) → `RepSegmenter` →
   `MetricsCalculator` (+`VelocityCalculator`) → `FormRules`, gated by
   `TrackingQuality`. **All thresholds live in `AnalysisTuning.swift`.**
-  `PlateDetector` (review-time plate classes by diameter+color) also lives
-  here.
-- `Squatter/Coach/` — Anthropic API coaching: `CoachPrompt` embeds live
+  `PlateDetector` (review-time plate classes by diameter+color),
+  `FormFaultDetector` (per-frame fault flags coloring the video overlay),
+  and `LiveRepCounter` (2D live rep counting) also live here.
+- `Squatter/Coach/` — Anthropic API coaching: `CoachClient` +
+  `KeyframeExtractor` (rep-bottom JPEGs); `CoachPrompt` embeds live
   thresholds; `CoachReport` mirrors `CoachPrompt.outputSchema` — keep in
-  sync.
+  sync. Report cached as `.coach` beside the video; API key in the Keychain
+  (`CoachKeyStore`).
 - `Squatter/UI/` — SwiftUI, Mazda-Kodo visual language (`Theme.swift`).
   `HomeView` owns all routes; review screen has weight field + plate
   calculator; `BodyScanView` = profile page + three-pose scan flow.

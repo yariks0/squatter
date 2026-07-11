@@ -7,6 +7,10 @@ import Foundation
 struct BodyGeometryProfile: Codable, Sendable, Equatable {
     var metric: MetricBodyGeometry
     var scannedAt: Date
+    /// LiDAR-measured standing height from the scan clip; lets the profile
+    /// page sanity-check each bone against typical human proportions.
+    /// Optional so profiles saved before it existed decode.
+    var heightMeters: Double? = nil
 }
 
 /// One profile per device, as JSON in Application Support.

@@ -41,6 +41,9 @@ enum AnalysisTuning {
     /// Standing frames (and per-bone samples) required before the scan is
     /// trusted; below this the session runs uncorrected.
     static let geometryMinimumScanFrames = 12
+    /// Signal fraction of the standing baseline below which a scan frame
+    /// belongs to the deep hold — the lifter's full-depth reference pose.
+    static let geometryScanDeepFraction = 0.75
     /// Metric femur scans noisier than this (MAD/median of the standing
     /// samples) can't be trusted to anchor the pose. Real in-session scans
     /// measured 0.02–0.06; a controlled pre-scan should sit near 0.02.

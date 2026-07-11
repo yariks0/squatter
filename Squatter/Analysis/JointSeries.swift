@@ -58,6 +58,11 @@ struct JointSeries: Codable, Sendable {
     /// Full-capture-rate bar trajectory for velocity; optional so analyses
     /// saved before it existed still decode.
     var barTrack: [BarSample]?
+    /// Video width / height. Normalized image x and y span different pixel
+    /// counts, so horizontal metric measurements (shoulder width, T-pose arm
+    /// lengths) need this to convert: Δmeters = Δx × aspect ×
+    /// `metersPerImageHeight`. Optional so old analyses decode.
+    var imageAspectRatio: Float?
 
     var duration: TimeInterval {
         guard let first = frames.first, let last = frames.last else { return 0 }

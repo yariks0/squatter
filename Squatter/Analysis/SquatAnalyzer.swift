@@ -76,7 +76,28 @@ enum SquatAnalyzer {
     /// fallback when no pre-scan profile exists, and what the scan flow runs
     /// over a dedicated standing recording.
     static func metricScan(of series: JointSeries, activity: ActivityType) -> MetricBodyGeometry? {
-        MetricBodyGeometry.measure(from: standingFrames(of: series, activity: activity))
+        MetricBodyGeometry.measure(
+            from: standingFrames(of: series, activity: activity),
+            aspectRatio: series.imageAspectRatio
+        )
+    }
+
+    /// The dedicated body-scan flow's measurement: standing frames plus the
+    /// deep-hold frames, which give the lifter's own full-depth reference.
+    /// Sessions use `metricScan` — no depth calibration from loaded bottoms,
+    /// which are the very thing being judged.
+    static func profileScan(of series: JointSeries) -> MetricBodyGeometry? {
+        let signal = RepSegmenter.liftSignal(series, activity: .squat)
+        let baseline = RepSegmenter.standingBaseline(of: signal)
+        guard baseline > 0 else { return nil }
+        let deep = zip(series.frames, signal)
+            .filter { $0.1 <= baseline * AnalysisTuning.geometryScanDeepFraction }
+            .map(\.0)
+        return MetricBodyGeometry.measure(
+            from: standingFrames(of: series, activity: .squat),
+            aspectRatio: series.imageAspectRatio,
+            deepFrames: deep
+        )
     }
 
     /// The body scan: every set starts (or locks out) standing, where Vision

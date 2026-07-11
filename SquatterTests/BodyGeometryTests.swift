@@ -22,7 +22,48 @@ import simd
         let metric = try #require(SquatAnalyzer.metricScan(of: squat.series(), activity: .squat))
         #expect(abs(metric.femurMeters - Double(squat.femurLength)) < 0.01)
         #expect(abs(metric.shinMeters - Double(squat.shinLength)) < 0.01)
+        #expect(abs(try #require(metric.torsoMeters) - Double(squat.torsoLength)) < 0.01)
         #expect(metric.quality < 0.02)
+    }
+
+    /// The scan's deep hold records the lifter's own full-depth reference
+    /// via the same drop formula the pelvis anchor uses.
+    @Test func profileScanMeasuresDeepestHold() throws {
+        var squat = SyntheticSquat(repCount: 1, maxFemurAngle: 110)
+        squat.bottomPauseSeconds = 5
+        squat.metersPerImageHeight = 2.2
+        let metric = try #require(SquatAnalyzer.profileScan(of: squat.series()))
+        let deepest = try #require(metric.deepestHipBelowKneeDegrees)
+        #expect(abs(deepest - 20) < 3)
+        // Session scans must not measure depth from loaded bottoms.
+        let session = try #require(SquatAnalyzer.metricScan(of: squat.series(), activity: .squat))
+        #expect(session.deepestHipBelowKneeDegrees == nil)
+    }
+
+    /// The scan's frontal + T-pose stage: widths from horizontal image spans
+    /// × aspect × scale, arm segments while held straight out.
+    @Test func metricScanMeasuresWidthsAndArmsFromFrontalView() throws {
+        var squat = SyntheticSquat()
+        squat.metersPerImageHeight = 2.2
+        squat.armsOut = true
+        let metric = try #require(SquatAnalyzer.metricScan(of: squat.series(), activity: .squat))
+        #expect(abs(try #require(metric.shoulderWidthMeters) - 0.36) < 0.01)
+        #expect(abs(try #require(metric.hipWidthMeters) - 2 * Double(squat.hipHalfWidth)) < 0.01)
+        #expect(abs(try #require(metric.upperArmMeters) - Double(squat.upperArmLength)) < 0.01)
+        #expect(abs(try #require(metric.forearmMeters) - Double(squat.forearmLength)) < 0.01)
+    }
+
+    /// Side-on frames measure legs (vertical drops are view-invariant) but
+    /// never widths or arms — the spans have collapsed.
+    @Test func metricScanSkipsWidthsFromSideView() throws {
+        var squat = SyntheticSquat()
+        squat.metersPerImageHeight = 2.2
+        squat.armsOut = true
+        squat.imageYawDegrees = 90
+        let metric = try #require(SquatAnalyzer.metricScan(of: squat.series(), activity: .squat))
+        #expect(abs(metric.femurMeters - Double(squat.femurLength)) < 0.01)
+        #expect(metric.shoulderWidthMeters == nil)
+        #expect(metric.upperArmMeters == nil)
     }
 
     /// Vision's real-footage failure mode (measured on pulled sessions): the

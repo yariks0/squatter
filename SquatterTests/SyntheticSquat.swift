@@ -34,6 +34,13 @@ struct SyntheticSquat {
     var metersPerImageHeight: Float = 0
     /// Camera bearing for the image projection: 0 = frontal, 90 = side view.
     var imageYawDegrees = 0.0
+    /// Arms held straight out to the sides (the scan's T-pose stage);
+    /// otherwise no elbow/wrist joints are generated, like a lifter whose
+    /// arms the detector ignores.
+    var armsOut = false
+
+    let upperArmLength: Float = 0.28
+    let forearmLength: Float = 0.26
     /// Degrees knocked off the *model's* femur angle at the bottom while the
     /// image points keep the true pose — Vision's real-footage failure mode:
     /// an internally consistent skeleton posed too shallow.
@@ -67,7 +74,10 @@ struct SyntheticSquat {
             addPhase(duration: concentricSeconds) { 1 - $0 * (1 - rest) }
             addPhase(duration: pauseSeconds) { _ in rest }
         }
-        return JointSeries(frames: frames, bodyHeight: 1.78, usedDepth: false)
+        return JointSeries(
+            frames: frames, bodyHeight: 1.78, usedDepth: false,
+            imageAspectRatio: metersPerImageHeight > 0 ? 1 : nil
+        )
     }
 
     /// `squatProgress` 0 = standing, 1 = bottom.
@@ -147,8 +157,14 @@ struct SyntheticSquat {
             positions[BodyJoint(rawValue: "\(prefix)Hip")!] = hip
             positions[BodyJoint(rawValue: "\(prefix)Knee")!] = knee
             positions[BodyJoint(rawValue: "\(prefix)Ankle")!] = ankle
-            positions[BodyJoint(rawValue: "\(prefix)Shoulder")!] =
-                positions[.centerShoulder]! + SIMD3(sign * 0.18, 0, 0)
+            let shoulder = positions[.centerShoulder]! + SIMD3(sign * 0.18, 0, 0)
+            positions[BodyJoint(rawValue: "\(prefix)Shoulder")!] = shoulder
+            if armsOut {
+                let elbow = shoulder + SIMD3(sign * upperArmLength, 0, 0)
+                positions[BodyJoint(rawValue: "\(prefix)Elbow")!] = elbow
+                positions[BodyJoint(rawValue: "\(prefix)Wrist")!] =
+                    elbow + SIMD3(sign * forearmLength, 0, 0)
+            }
         }
         return positions
     }

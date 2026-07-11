@@ -65,6 +65,7 @@ enum PoseExtractor {
         var heights: [Float] = []
         var heightSamples: [Double] = []
         var barTrack: [BarSample] = []
+        var imageAspectRatio: Float?
         var lastScale: Double?
         var usedDepth = false
         var lastAnalyzedTime = -Double.infinity
@@ -80,6 +81,10 @@ enum PoseExtractor {
             while let sample = output.copyNextSampleBuffer() {
                 try Task.checkCancellation()
                 guard let pixelBuffer = CMSampleBufferGetImageBuffer(sample) else { continue }
+                if imageAspectRatio == nil {
+                    imageAspectRatio = Float(CVPixelBufferGetWidth(pixelBuffer))
+                        / Float(CVPixelBufferGetHeight(pixelBuffer))
+                }
                 let presentationTime = CMSampleBufferGetPresentationTimeStamp(sample).seconds
                 let time = presentationTime - movieStart
                 guard time - lastAnalyzedTime >= minInterval else {
@@ -213,7 +218,8 @@ enum PoseExtractor {
             frames: frames,
             bodyHeight: bodyHeight,
             usedDepth: usedDepth,
-            barTrack: barTrack.isEmpty ? nil : barTrack
+            barTrack: barTrack.isEmpty ? nil : barTrack,
+            imageAspectRatio: imageAspectRatio
         )
     }
 

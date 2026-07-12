@@ -33,13 +33,19 @@ enum SquatAnalyzer {
         _ raw: JointSeries, activity: ActivityType = .squat,
         profile: BodyGeometryProfile? = nil
     ) -> SquatAnalysis {
-        let smoothed = JointSeriesSmoother.smoothed(raw, window: AnalysisTuning.smoothingWindow)
         // Joint angles are only as good as the skeleton: when bone lengths
         // jitter, every form rule fires on noise, so a single honest finding
-        // replaces them all. Judged before geometry correction — enforcing
-        // bone lengths would hide exactly the flicker this gate catches.
-        let jitter = TrackingQuality.boneLengthJitter(of: smoothed)
-        let trackable = smoothed.frames.isEmpty || jitter <= AnalysisTuning.trackingJitterGateRatio
+        // replaces them all. Judged on the un-repaired series — despiking
+        // (like geometry correction) would hide exactly the flicker this
+        // gate catches, so repair runs on a separate fork below.
+        let gateSeries = JointSeriesSmoother.smoothed(raw, window: AnalysisTuning.smoothingWindow)
+        let jitter = TrackingQuality.boneLengthJitter(of: gateSeries)
+        let trackable = gateSeries.frames.isEmpty || jitter <= AnalysisTuning.trackingJitterGateRatio
+        // Repair on the raw series (SG would smear a spike across its whole
+        // window), then smooth what remains.
+        let smoothed = JointSeriesSmoother.smoothed(
+            JointTrackRepair.repaired(raw), window: AnalysisTuning.smoothingWindow
+        )
         // Squat-only for now: the pelvis mis-projection shows on deep squats,
         // while on a deadlift the corrector's spine handling measurably
         // perturbs the spine-flexion (injury) signal — don't enable there
@@ -54,14 +60,17 @@ enum SquatAnalyzer {
             SkeletonCorrector.corrected(smoothed, geometry: $0, metric: metric)
         } ?? smoothed
         let reps = RepSegmenter.segment(series, activity: activity)
-        let metrics = MetricsCalculator.metrics(for: reps, in: series, activity: activity)
-        let findings = trackable
-            ? FormRules.findings(
-                for: metrics, activity: activity,
-                // Only the dedicated scan measures this, so a session-scan
-                // fallback never judges depth against itself.
-                depthReference: profile?.metric.deepestHipBelowKneeDegrees
+        var metrics = MetricsCalculator.metrics(for: reps, in: series, activity: activity)
+        // Per-rep jitter from the same un-repaired series as the global gate;
+        // frame indices align across the fork, so rep windows transfer.
+        let timeline = TrackingQuality.frameJitterTimeline(of: gateSeries)
+        for index in metrics.indices {
+            metrics[index].trackingJitter = TrackingQuality.repJitter(
+                timeline, from: reps[index].startIndex, to: reps[index].endIndex
             )
+        }
+        let findings = trackable
+            ? gatedFindings(for: metrics, activity: activity, profile: profile)
             : [FormRules.trackingQualityFinding(activity: activity)]
         return SquatAnalysis(
             reps: metrics,
@@ -75,6 +84,39 @@ enum SquatAnalyzer {
             bodyGeometry: geometry,
             metricGeometry: metric
         )
+    }
+
+    /// Form rules over only the reps whose own window tracked cleanly. When
+    /// the global gate passes but single reps flickered (someone walked
+    /// through the frame, a brief occlusion), those reps' angles are noise:
+    /// judging them would fire false findings, discarding the whole set
+    /// would waste the clean reps. Suppressed reps keep their metrics — only
+    /// rule judgment is withheld, and one info finding names them.
+    private static func gatedFindings(
+        for metrics: [RepMetrics], activity: ActivityType, profile: BodyGeometryProfile?
+    ) -> [Finding] {
+        let trusted = metrics.filter {
+            ($0.trackingJitter ?? 0) <= AnalysisTuning.repTrackingJitterGateRatio
+        }
+        // Every rep untrackable = the whole-set story, told the global way.
+        if trusted.isEmpty, !metrics.isEmpty {
+            return [FormRules.trackingQualityFinding(activity: activity)]
+        }
+        var findings = FormRules.findings(
+            for: trusted, activity: activity,
+            // Only the dedicated scan measures this, so a session-scan
+            // fallback never judges depth against itself.
+            depthReference: profile?.metric.deepestHipBelowKneeDegrees
+        )
+        let suppressed = metrics.filter {
+            ($0.trackingJitter ?? 0) > AnalysisTuning.repTrackingJitterGateRatio
+        }
+        if !suppressed.isEmpty {
+            findings.append(FormRules.partialTrackingFinding(
+                repNumbers: suppressed.map(\.repNumber), activity: activity
+            ))
+        }
+        return findings
     }
 
     /// Metric bone lengths from a series' standing frames — the in-the-wild

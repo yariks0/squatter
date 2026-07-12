@@ -29,15 +29,17 @@ UI (HomeView routes)
  └─ SessionReportView (reopens saved sessions; can re-analyze)
 
 SquatAnalyzer.analyze (pure, no I/O — the whole Analysis layer is UI-free):
-  JointSeriesSmoother.smoothed            (SG filter, window 5)
-  TrackingQuality.boneLengthJitter        (pre-correction! gate ≤ 0.01)
+  TrackingQuality.boneLengthJitter        (on smoothed *un-repaired* series! gate ≤ 0.01)
+  TrackingQuality.frameJitterTimeline     (same series; per-rep medians → per-rep gate)
+  JointTrackRepair.repaired               (fork: despike + gap-bridge the RAW series)
+  JointSeriesSmoother.smoothed            (SG filter, window 5, over the repaired series)
   SquatAnalyzer.scanGeometry              (model-space bone lengths, standing frames)
   SquatAnalyzer.metricScan / profile      (metric femur/shin/…, image drops × LiDAR scale)
   SkeletonCorrector.corrected             (squat-only image anchor, see below)
   RepSegmenter.segment                    (lift signal per activity)
-  MetricsCalculator.metrics               (per-rep RepMetrics)
-  VelocityCalculator (inside Metrics)     (MCV/peak from barTrack × scale)
-  FormRules.findings                      (+ depthReference from profile deep hold)
+  MetricsCalculator.metrics               (per-rep RepMetrics + trackingJitter fill)
+  VelocityCalculator (inside Metrics)     (MCV/peak from despiked barTrack × scale)
+  FormRules.findings                      (over per-rep-trusted reps only, see below)
 ```
 
 Type→file exceptions (everything else lives in `<TypeName>.swift`):
@@ -51,12 +53,13 @@ Type→file exceptions (everything else lives in `<TypeName>.swift`):
 | Stage | Key facts |
 |---|---|
 | `PoseExtractor` | Video+sidecar → `JointSeries`. 15 fps 3D pose + 2D image points; 30 fps `barTrack` (wrist-mid y). Sets per-frame `metersPerImageHeight` (LiDAR body plane × H / focal, pitch-corrected) and series-level `imageAspectRatio` (W/H), `bodyHeight` (measured, not the Vision prior). Resumes if the decoder dies mid-file (backgrounding). |
+| `JointTrackRepair` | Pre-smoothing fork: detrended Hampel despike (median-slope detrend, else mid-rep motion inflates the MAD and spikes slip under) + linear bridging of ≤ 2-frame joint dropouts, `positions` and `imagePoints` independently. Every touched joint flagged in `JointFrame.repairedJoints`. **Runs after TrackingQuality is measured** — cleaning first would mask the flicker the gate catches. Repaired joints may never assert a fault: `MetricsCalculator`'s valgus/spine sweeps skip repaired frames (a real session's degenerate stretch passed the valgus sanity guards after despiking and minted a fake 0.5 risk reading), and the overlay dims them instead of drawing red. |
 | `JointSeriesSmoother` | Quadratic Savitzky–Golay, window 5 (image points window 3). Preserves curvature — bottoms keep true depth. |
-| `TrackingQuality` | Median frame-to-frame relative bone-length change. Clean squats 0.0002–0.003; gate at 0.01 replaces all findings with one "tracking unstable". **Computed before SkeletonCorrector** — correction would mask flicker. |
+| `TrackingQuality` | Median frame-to-frame relative bone-length change. Clean squats 0.0002–0.003; gate at 0.01 replaces all findings with one "tracking unstable". **Computed before SkeletonCorrector and JointTrackRepair** — both would mask flicker. `frameJitterTimeline` + `repJitter` localize it: per-rep medians gate single reps (`repTrackingJitterGateRatio`, also 0.01) when the global gate passes — suppressed reps keep metrics/velocity but are excluded from FormRules, named in one info finding, and caveated in the coach prompt. Replay: clean-session rep windows measure 0.0003–0.0054, the broken 2026-07-08 bench windows 0.017–0.086 — 0.01 sits in the gap. Dropout-only breakage reads as *clean* jitter (missing bones don't register), so the per-rep gate catches flicker, not occlusion. |
 | `BodyGeometry` / `MetricBodyGeometry` | Scanned from standing frames (lift signal ≥ 97% of baseline). Model-space bone lengths anchor the corrector's femur length; metric lengths come from the vertical-drop trick (below). `profileScan` additionally reads deep-hold frames (signal ≤ 75% baseline) → `deepestHipBelowKneeDegrees`. |
 | `SkeletonCorrector` | Squat+LiDAR only. sin(femur elevation) = image-y drop × scale ÷ metric femur; pelvis (root+hips, rigid) re-posed to it. **Deepen-only** and **only when the model is already deep** (`geometryAnchorModelSineFloor`) — both rules earned on real footage (tilted-camera session lost 30°; standing 2D glitches minted phantom reps). There is no bone-length constraint pass: real Vision output is length-consistent; a length pass was built, proven a no-op on clean footage and harmful on broken stretches, and removed. |
 | `RepSegmenter` | Signal per lift: squat = hip-above-ankle distance, bench = wrist–shoulder distance, deadlift = wrist–ankle distance. Standing baseline = 90th percentile. |
-| `MetricsCalculator` | Per-rep `RepMetrics`. Squat depth = `hipBelowKneeDegrees` (femur vs horizontal, + = below parallel). `stanceWidthRatio` is **image-x spans** (see facts), nil from side views. |
+| `MetricsCalculator` | Per-rep `RepMetrics`. Squat depth = `hipBelowKneeDegrees` (femur vs horizontal, + = below parallel). `stanceWidthRatio` is **image-x spans** (see facts), nil from side views. `VelocityCalculator` cleans a **local copy** of the stored-raw `barTrack` at consumption (detrended Hampel on y and scale, quadratic SG on interior y, edge samples never smoothed — they anchor mean velocity): a single mislocked wrist sample otherwise fakes a multi-m/s peak (real sessions: 5.03 → 2.21, 3.51 → 3.10; clean-set MCV shifts ≤ 1.3%). |
 | `FormRules` | Thresholds all in `AnalysisTuning`. Squat judged vs Chinese high-bar practice; `depthReference` (profile deep hold) personalizes the full-depth line (capped by the absolute standard) and adds "Depth in reserve". |
 | `PlateDetector` | Review-time, not pipeline. 2D wrists → bar line → sleeve crops; depth sampled **at each sleeve** (near/far differ ~1 m at 45°); plate faces = ellipses, vertical axis = true diameter; ring-pixel color vote. Emits diameter+color *classes*, never counts (identical plates stack invisibly). Untuned on real footage: gates conservative, failure mode is silence. |
 
@@ -65,7 +68,10 @@ Type→file exceptions (everything else lives in `<TypeName>.swift`):
 - `WorkoutSession` (SwiftData, `default.store`): stores full `SquatAnalysis`
   JSON in `analysisData` + `weightKg`, `activityRaw`. **Every new field on
   `SquatAnalysis`/`RepMetrics`/`Finding`/`JointSeries`/`JointFrame` must be
-  optional or defaulted** — old sessions must decode.
+  optional or defaulted** — old sessions must decode. Optional-by-law fields
+  so far: `JointFrame.jointConfidences` (2D detector, the 3D observation
+  exposes none) + `.repairedJoints`, `RepMetrics.trackingJitter`; nil maps =
+  pre-upgrade session, treated as fully confident.
 - `Application Support/body-geometry.json` → `BodyGeometryProfile`
   (`MetricBodyGeometry` + `scannedAt` + `heightMeters`). Loaded per analysis;
   **overrides** in-session scans. Saving a scan replaces it wholesale.
@@ -104,6 +110,15 @@ Type→file exceptions (everything else lives in `<TypeName>.swift`):
 - Loaded vs unloaded depth calibration is **circular** if taken from a
   session's own bottoms — only the dedicated scan flow measures the
   deep-hold reference.
+- **A Hampel filter without detrending misses real spikes**: mid-rep joints
+  move several window-widths per second, the in-window trend inflates the
+  MAD, and a measured +0.2 image spike slipped under 3 MADs. Median-slope
+  detrend first (`JointTrackRepair`, `VelocityCalculator`); after it, steady
+  motion of any speed deviates ≈ 0.
+- **Repaired data may not assert faults**: despiking s17's broken rep-9
+  stretch made degenerate frames pass `maxValgus`'s sanity guards → fake
+  0.51 (risk-level) valgus. Fault-sweeping metrics skip repaired frames;
+  the overlay draws uncertain bones dim, never red.
 
 ## Feature recipes
 

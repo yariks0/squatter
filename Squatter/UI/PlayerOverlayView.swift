@@ -70,12 +70,18 @@ private struct SkeletonOverlay: View {
                 return CGPoint(x: CGFloat(p.x) * size.width, y: (1 - CGFloat(p.y)) * size.height)
             }
             // Parts breaking form right now (folding torso, caving knee)
-            // draw red; everything in position stays green.
+            // draw red; everything in position stays green. Bones with a
+            // repaired or low-confidence endpoint dim to a hint — and never
+            // draw red: a fault may not be asserted from an invented joint.
             var okPath = Path()
             var faultPath = Path()
+            var uncertainPath = Path()
             for bone in BodyJoint.bones {
                 guard let pa = point(bone.0), let pb = point(bone.1) else { continue }
-                if BodyJoint.faulted(bone, by: faults) {
+                if frame.isUncertain(bone.0) || frame.isUncertain(bone.1) {
+                    uncertainPath.move(to: pa)
+                    uncertainPath.addLine(to: pb)
+                } else if BodyJoint.faulted(bone, by: faults) {
                     faultPath.move(to: pa)
                     faultPath.addLine(to: pb)
                 } else {
@@ -85,11 +91,15 @@ private struct SkeletonOverlay: View {
             }
             context.stroke(okPath, with: .color(.green.opacity(0.8)), lineWidth: 3)
             context.stroke(faultPath, with: .color(.red.opacity(0.9)), lineWidth: 4)
+            context.stroke(uncertainPath, with: .color(.green.opacity(0.25)), lineWidth: 2)
             for joint in BodyJoint.allCases {
                 guard let p = point(joint) else { continue }
+                let color: Color = frame.isUncertain(joint)
+                    ? .green.opacity(0.25)
+                    : joint.faulted(by: faults) ? .red : .green
                 context.fill(
                     Path(ellipseIn: CGRect(x: p.x - 4, y: p.y - 4, width: 8, height: 8)),
-                    with: .color(joint.faulted(by: faults) ? .red : .green)
+                    with: .color(color)
                 )
             }
         }

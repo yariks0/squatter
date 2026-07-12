@@ -85,6 +85,14 @@ struct RepMetrics: Codable, Sendable, Identifiable {
     /// Where the ascent was slowest (the sticking region), as a fraction of
     /// the rep's travel above the touch. Coach context, not a rule.
     var stickingHeightFraction: Double?
+
+    // MARK: Tracking quality (optional so old JSON decodes)
+    /// Median relative bone-length jitter across this rep's window (see
+    /// `TrackingQuality.repJitter`, measured pre-repair). Above
+    /// `AnalysisTuning.repTrackingJitterGateRatio` the rep's form findings
+    /// are suppressed — its angles are noise — while the rest of the set is
+    /// judged normally.
+    var trackingJitter: Double?
 }
 
 enum MetricsCalculator {
@@ -169,12 +177,24 @@ enum MetricsCalculator {
         )
     }
 
+    /// Whether every listed joint in the frame is a real detection — none
+    /// despiked or bridged by `JointTrackRepair`. The peak-over-frames risk
+    /// metrics (valgus, spine flexion) require this: repaired values are
+    /// trend estimates, and a real session showed despiking can make a
+    /// broken stretch's degenerate frames plausible enough to pass the
+    /// geometric sanity guards and mint a fake risk finding.
+    private static func measured(_ frame: JointFrame, _ joints: [BodyJoint]) -> Bool {
+        guard let repaired = frame.repairedJoints else { return true }
+        return repaired.isDisjoint(with: joints)
+    }
+
     /// Minimum spine-joint angle (root→spine→shoulder center) over the rep:
     /// the deepest the back rounded while loaded.
     private static func worstSpineFlexion(frames: [JointFrame], from: Int, to: Int) -> Double? {
         var worst: Double?
         for index in from ... min(to, frames.count - 1) {
-            guard let angle = jointAngle(frames[index], .root, .spine, .centerShoulder)
+            guard measured(frames[index], [.root, .spine, .centerShoulder]),
+                  let angle = jointAngle(frames[index], .root, .spine, .centerShoulder)
             else { continue }
             worst = min(worst ?? .infinity, angle)
         }
@@ -617,7 +637,11 @@ enum MetricsCalculator {
         var worst = 0.0
         for index in from ... min(to, frames.count - 1) {
             let frame = frames[index]
-            guard let leftHip = frame.position(.leftHip),
+            let legJoints: [BodyJoint] = [
+                .leftHip, .rightHip, .leftKnee, .rightKnee, .leftAnkle, .rightAnkle,
+            ]
+            guard measured(frame, legJoints),
+                  let leftHip = frame.position(.leftHip),
                   let rightHip = frame.position(.rightHip) else { continue }
             let hipWidth = simd_length(leftHip - rightHip)
             guard hipWidth > 1e-6 else { continue }

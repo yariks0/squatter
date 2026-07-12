@@ -348,26 +348,41 @@ enum PoseExtractor {
         // the body toward the frame edges (worst at the legs). The 2D
         // detector returns actually-detected pixel locations — prefer those
         // for anything drawn or measured in image space.
+        var confidences: [BodyJoint: Float] = [:]
         if let detected = try? pose2D?.recognizedPoints(.all) {
             func detectedPoint(_ name: VNHumanBodyPoseObservation.JointName) -> SIMD2<Float>? {
                 guard let point = detected[name], point.confidence > 0.3 else { return nil }
                 return SIMD2(Float(point.location.x), Float(point.location.y))
             }
             for (joint, name) in Self.pose2DNames {
+                // Confidence is kept even below the acceptance gate — a low
+                // number tells the overlay the retained re-projected point is
+                // a guess, not a detection.
+                if let point = detected[name] { confidences[joint] = Float(point.confidence) }
                 if let point = detectedPoint(name) { imagePoints[joint] = point }
             }
+            // Derived joints inherit their weakest constituent's confidence
+            // (neck is recorded under .centerShoulder by the loop above).
+            let neckConfidence = confidences[.centerShoulder] ?? 0
             if let root = detectedPoint(.root), let neck = detectedPoint(.neck) {
                 imagePoints[.spine] = (root + neck) / 2
+                confidences[.spine] = min(confidences[.root] ?? 0, neckConfidence)
                 // The 2D set has no head-top joint; extend past the nose to
                 // the crown (factor calibrated against a known body height —
                 // it feeds the metric height measurement, not just drawing).
                 if let nose = detectedPoint(.nose) {
                     imagePoints[.centerHead] = nose
                     imagePoints[.topHead] = nose + (nose - neck) * Self.headTopExtensionFactor
+                    let derived = min(Float(detected[.nose]?.confidence ?? 0), neckConfidence)
+                    confidences[.centerHead] = derived
+                    confidences[.topHead] = derived
                 }
             }
         }
-        return JointFrame(time: time, positions: positions, imagePoints: imagePoints)
+        return JointFrame(
+            time: time, positions: positions, imagePoints: imagePoints,
+            jointConfidences: confidences.isEmpty ? nil : confidences
+        )
     }
 
     private static let pose2DNames: [(BodyJoint, VNHumanBodyPoseObservation.JointName)] = [

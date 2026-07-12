@@ -97,6 +97,57 @@ struct PrecisionTests {
         #expect(abs(velocity.peak - 0.30) < 0.001)
     }
 
+    @Test func barTrackSpikeDoesNotFakePeakVelocity() {
+        // The 0.30 m/s ramp with one mislocked wrist sample: +0.15 image
+        // heights for one frame reads as a multi-m/s instant without the
+        // consumption-time despike.
+        let frames = (0 ..< 10).map { index in
+            JointFrame(time: Double(index) / 15, positions: [:], imagePoints: [:])
+        }
+        var track = (0 ..< 20).map { index -> BarSample in
+            let t = Double(index) / 30
+            return BarSample(time: t, y: 0.3 + 0.1 * t, scale: 3.0)
+        }
+        track[10].y += 0.15
+        let series = JointSeries(
+            frames: frames, bodyHeight: nil, usedDepth: true, barTrack: track
+        )
+        let rep = Rep(
+            startIndex: 0, bottomIndex: 0, endIndex: 9,
+            startTime: 0, bottomTime: 0, endTime: 19.0 / 30
+        )
+        let velocity = try! #require(
+            VelocityCalculator.concentricVelocities(for: [rep], in: series)[0]
+        )
+        #expect(abs(velocity.mean - 0.30) < 0.001)
+        #expect(abs(velocity.peak - 0.30) < 0.001)
+    }
+
+    @Test func barTrackScaleGlitchRejected() {
+        // One sample's LiDAR scale doubles (depth hole hit the background) —
+        // a direct velocity multiplier without the despike.
+        let frames = (0 ..< 10).map { index in
+            JointFrame(time: Double(index) / 15, positions: [:], imagePoints: [:])
+        }
+        var track = (0 ..< 20).map { index -> BarSample in
+            let t = Double(index) / 30
+            return BarSample(time: t, y: 0.3 + 0.1 * t, scale: 3.0)
+        }
+        track[10].scale = 6.0
+        let series = JointSeries(
+            frames: frames, bodyHeight: nil, usedDepth: true, barTrack: track
+        )
+        let rep = Rep(
+            startIndex: 0, bottomIndex: 0, endIndex: 9,
+            startTime: 0, bottomTime: 0, endTime: 19.0 / 30
+        )
+        let velocity = try! #require(
+            VelocityCalculator.concentricVelocities(for: [rep], in: series)[0]
+        )
+        #expect(abs(velocity.mean - 0.30) < 0.001)
+        #expect(abs(velocity.peak - 0.30) < 0.001)
+    }
+
     @Test func barTrackHoldsScaleThroughGaps() {
         // Scale known only on the first sample (the 3D pass's frame); the
         // in-between 2D-only samples inherit it.

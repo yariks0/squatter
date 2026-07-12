@@ -42,7 +42,9 @@ enum JointSeriesSmoother {
 
     /// SG when the full centered window is available for the joint; plain
     /// average of whatever is present near the series edges or through
-    /// detection dropouts — do not invent joints the detector didn't see.
+    /// detection dropouts — do not invent joints the detector didn't see
+    /// (the one bounded, flagged exception lives upstream in
+    /// `JointTrackRepair`).
     private static func filtered<Value: SIMD>(
         at index: Int, half: Int, in frames: [JointFrame],
         of track: (JointFrame) -> Value?

@@ -64,6 +64,25 @@ enum FormRules {
         )
     }
 
+    /// Finding when specific reps — not the whole set — were untrackable:
+    /// their form findings were suppressed while the rest of the set was
+    /// judged normally. Info severity, no score penalty: a camera problem is
+    /// not a form fault (the global gate's warning covers the catastrophic
+    /// whole-set case).
+    static func partialTrackingFinding(repNumbers: [Int], activity: ActivityType) -> Finding {
+        let reps = repNumbers.map(String.init).joined(separator: ", ")
+        let title = repNumbers.count == 1
+            ? "Rep \(reps) couldn't be tracked reliably"
+            : "Reps \(reps) couldn't be tracked reliably"
+        return Finding(
+            severity: .info,
+            title: title,
+            detail: "The skeleton flickered through \(repNumbers.count == 1 ? "this rep" : "these reps"), so \(repNumbers.count == 1 ? "its" : "their") joint angles are noise and \(repNumbers.count == 1 ? "it was" : "they were") left out of the form judgment. The rest of the set was judged normally.",
+            repNumbers: repNumbers,
+            topic: .framing
+        )
+    }
+
     private static func squatFindings(
         for reps: [RepMetrics], depthReference: Double? = nil
     ) -> [Finding] {

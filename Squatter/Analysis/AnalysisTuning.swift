@@ -135,6 +135,28 @@ enum AnalysisTuning {
     // MARK: Smoothing
     static let smoothingWindow = 5
 
+    // MARK: Track repair (see JointTrackRepair — runs on the raw series,
+    // and only after TrackingQuality has been measured: cleaning first
+    // would mask the very flicker the gate catches)
+    /// Longest joint dropout bridged by interpolation (≈130 ms at 15 fps).
+    /// Longer gaps are real occlusion — left missing, never invented.
+    static let repairMaxGapFrames = 2
+    /// Hampel half-window (samples each side of the judged one); matches
+    /// the smoother's reach.
+    static let repairSpikeWindow = 2
+    /// Deviation from the window median, in MADs, that marks a tracking
+    /// spike (the classic Hampel k = 3). Real articulation at 15 fps is
+    /// monotone inside a 5-frame window, so its median deviation ≈ 0 —
+    /// only detector flicker trips this.
+    static let repairSpikeSigmas: Float = 3.0
+    /// MAD floors so a still track (MAD ≈ 0) can't flag micro-noise: clean
+    /// footage shows ~2–5 mm of per-frame position noise, so the smallest
+    /// flaggable spike is 3 × 0.01 = 30 mm in model space and 3 × 0.005 =
+    /// 1.5% of image height (~33 mm at a 2.2 m scale). First-pass values —
+    /// finalize on real-footage replay.
+    static let repairSpikeFloorMeters: Float = 0.01
+    static let repairSpikeFloorImage: Float = 0.005
+
     // MARK: Live set tracking (2D image-space signals at ~10 Hz while
     // recording, driving spoken feedback only — the offline 3D analysis
     // remains the truth for the report). First-pass values.
@@ -183,6 +205,11 @@ enum AnalysisTuning {
     /// Rolling window for the standing/lockout baseline (a decaying max):
     /// long enough to survive a slow rep, short enough to track drift.
     static let liveBaselineWindowSeconds: TimeInterval = 10
+    /// Samples in the live transition median: rep entry/exit crossings are
+    /// judged on the median of this many raw signals so a single flickered
+    /// sample can't start or end a rep. Odd; 3 costs at most one sample
+    /// (~100 ms at 10 Hz) of crossing latency.
+    static let liveSignalMedianWindow = 3
 
     // MARK: Bar velocity (from the wrist image trajectory × LiDAR metric
     // scale; MCV = mean concentric velocity, the headline VBT number).
@@ -195,6 +222,20 @@ enum AnalysisTuning {
     static let squatMinimalVelocity = 0.30
     static let benchMinimalVelocity = 0.15
     static let deadliftMinimalVelocity = 0.25
+    /// Bar-track spike gate: a sample deviating from its detrended 5-sample
+    /// window median beyond sigmas × max(MAD, floor) is a detector mislock
+    /// (the wrist lock jumped to a knee or plate) and is replaced by the
+    /// window's estimate before velocity is derived. The floor (normalized
+    /// image y) is ≈9 mm at a 2.2 m scale — above wrist noise, far below a
+    /// mislock's jump; real bar motion is trend, which detrending removes
+    /// from the judgment entirely. First-pass — validate on replayed
+    /// sessions.
+    static let barTrackSpikeSigmas = 3.0
+    static let barTrackSpikeFloor = 0.004
+    /// Scale-spike floor as a fraction of the track's median scale: a LiDAR
+    /// hole jumps to the background (roughly a doubling, multiplying
+    /// velocity directly) while steady reads wobble well under 1%.
+    static let barTrackScaleSpikeFloorFraction = 0.01
 
     // MARK: - Deadlift
     // Standards: neutral spine throughout (the injury line), bar dragged up
@@ -239,12 +280,27 @@ enum AnalysisTuning {
     /// instead of resetting — momentum, not strength, and a flexed catch.
     static let deadliftBouncePauseSeconds = 0.2
 
+    // MARK: Overlay
+    /// 2D joint confidence below which the skeleton overlay dims that
+    /// joint's bones — drawn as a hint, not an assertion (repaired joints
+    /// dim regardless; see `JointFrame.isUncertain`). Extraction accepts
+    /// image points above 0.3, but the 0.3–0.5 band tracks while wandering.
+    /// First-pass — check the on-footage confidence histogram before
+    /// trusting it.
+    static let overlayConfidenceFloor: Float = 0.5
+
     // MARK: Tracking quality gate
     /// Median relative bone-length jitter (see `TrackingQuality`) above which
     /// joint angles cannot be trusted: form rules are replaced by a single
     /// tracking-quality finding. Well-framed squat sessions measure
     /// 0.0003–0.0026; the badly framed 2026-07-08 bench recording, 0.035.
     static let trackingJitterGateRatio = 0.01
+    /// Per-rep version of the gate (median of the jitter timeline over one
+    /// rep's window): a rep above it has its form findings suppressed while
+    /// the rest of the set stays judged. Starts equal to the global gate —
+    /// per-rep windows are shorter and their medians noisier, so validate
+    /// the per-rep distribution on pulled sessions before diverging.
+    static let repTrackingJitterGateRatio = 0.01
 
     // MARK: - Bench press
     // Standards: bar touches the chest, elbows ~45–70° from the torso (not

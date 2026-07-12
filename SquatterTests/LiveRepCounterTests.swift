@@ -122,6 +122,27 @@ struct LiveRepCounterTests {
         #expect(Self.run(values).isEmpty)
     }
 
+    @Test func spikeMidRepDoesNotEndRepEarly() {
+        // One flickered standing-height hip sample during the bottom hold.
+        // Ungated, it crosses the exit threshold: the rep completes ~1 s
+        // early and the remaining ascent double-counts as a second rep.
+        var values = Self.squatTrajectory(bottoms: [0.28], holdSeconds: 0.6)
+        values[34] = 0.50 // inside the bottom hold (indices 32–37)
+        let events = Self.run(values)
+        #expect(events == [.repCompleted(count: 1, faults: [])])
+    }
+
+    @Test func spikeOutsideRepDoesNotStartOne() {
+        // A single deep dip while standing, then one real rep: only the real
+        // rep may count, with no phantom state carried into it.
+        var values = Array(repeating: 0.50, count: 20)
+        values.append(0.28)
+        values.append(contentsOf: Array(repeating: 0.50, count: 10))
+        values.append(contentsOf: Self.squatTrajectory(bottoms: [0.28]).dropFirst(20))
+        let events = Self.run(values)
+        #expect(events == [.repCompleted(count: 1, faults: [])])
+    }
+
     @Test func holdsSignalThroughMissingJoints() {
         // Hip tracking drops out around the bottom; the held value must not
         // end the rep or double-count it.

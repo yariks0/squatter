@@ -286,6 +286,15 @@ enum CoachPrompt {
         return blocks
     }
 
+    /// Marker appended to a rep line whose tracking window flickered: its
+    /// numbers are embedded (the coach sees the whole set) but must not be
+    /// treated as form evidence.
+    private static func trackingCaveat(_ rep: RepMetrics) -> String {
+        guard let jitter = rep.trackingJitter,
+              jitter > AnalysisTuning.repTrackingJitterGateRatio else { return "" }
+        return " — TRACKING UNRELIABLE: this rep's angles are noise; do not judge form from its numbers or keyframe"
+    }
+
     private static func setContext(_ analysis: SquatAnalysis) -> String {
         var lines: [String] = []
         lines.append("Set: \(analysis.kind.displayName), \(analysis.reps.count) reps, score \(analysis.score)/100.")
@@ -327,6 +336,7 @@ enum CoachPrompt {
                 if let velocity = rep.meanConcentricVelocity {
                     line += String(format: ", MCV %.2f m/s", velocity)
                 }
+                line += trackingCaveat(rep)
                 lines.append(line)
             }
         case .benchPress:
@@ -357,6 +367,7 @@ enum CoachPrompt {
                 if let velocity = rep.meanConcentricVelocity {
                     line += String(format: ", MCV %.2f m/s", velocity)
                 }
+                line += trackingCaveat(rep)
                 lines.append(line)
             }
         case .deadlift:
@@ -384,6 +395,7 @@ enum CoachPrompt {
                 if let velocity = rep.meanConcentricVelocity {
                     line += String(format: ", MCV %.2f m/s", velocity)
                 }
+                line += trackingCaveat(rep)
                 lines.append(line)
             }
         }

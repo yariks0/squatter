@@ -23,14 +23,99 @@ enum VelocityCalculator {
     /// (multiply by 1/dt). Exact on any second-order trajectory.
     private static let sgDerivative: [Double] = [-2, -1, 0, 1, 2].map { $0 / 10 }
 
+    /// Quadratic SG smoothing weights, centered 5-sample window — any
+    /// second-order trajectory passes unchanged (same weights as
+    /// `JointSeriesSmoother`).
+    private static let sgSmooth: [Double] = [-3, 12, 17, 12, -3].map { $0 / 35 }
+
     /// Per-rep concentric velocities, index-aligned with `reps`.
     static func concentricVelocities(for reps: [Rep], in series: JointSeries) -> [RepVelocity?] {
-        reps.map { rep in
-            if let track = series.barTrack, let velocity = velocity(for: rep, track: track) {
+        let cleaned = series.barTrack.map(cleanedTrack)
+        return reps.map { rep in
+            if let cleaned, let velocity = velocity(for: rep, track: cleaned) {
                 return velocity
             }
             return velocity(for: rep, in: series)
         }
+    }
+
+    /// Hampel-despiked, lightly SG-smoothed copy of the bar track. The
+    /// stored track stays raw — re-analysis is idempotent — and cleaning
+    /// happens at consumption: a single mislocked wrist sample otherwise
+    /// enters the SG derivative with weight 0.2/dt and fakes a ~2 m/s peak.
+    /// Edge samples (first/last 2) are despiked but never smoothed — a
+    /// shrunken edge window would bias the endpoints that mean velocity is
+    /// measured between.
+    private static func cleanedTrack(_ track: [BarSample]) -> [BarSample] {
+        guard track.count >= 5 else { return track }
+        var cleaned = track
+
+        let rawY = track.map(\.y)
+        var y = rawY
+        for index in rawY.indices {
+            if let estimate = spikeReplacement(
+                at: index, in: rawY, floor: AnalysisTuning.barTrackSpikeFloor
+            ) {
+                y[index] = estimate
+            }
+        }
+        for index in y.indices {
+            if index >= 2, index < y.count - 2 {
+                var value = 0.0
+                for (offset, weight) in sgSmooth.enumerated() {
+                    value += y[index - 2 + offset] * weight
+                }
+                cleaned[index].y = value
+            } else {
+                cleaned[index].y = y[index]
+            }
+        }
+
+        // A scale glitch multiplies velocity directly; judge the non-nil
+        // subsequence only, and only when there is enough of it (a lone
+        // scale inherited across a 2D-only stretch must survive).
+        let scaleIndices = track.indices.filter { track[$0].scale != nil }
+        if scaleIndices.count >= 5 {
+            let scales = scaleIndices.map { track[$0].scale! }
+            let floor = median(of: scales) * AnalysisTuning.barTrackScaleSpikeFloorFraction
+            for (position, index) in scaleIndices.enumerated() {
+                if let estimate = spikeReplacement(at: position, in: scales, floor: floor) {
+                    cleaned[index].scale = estimate
+                }
+            }
+        }
+        return cleaned
+    }
+
+    /// Detrended Hampel judgment for one sample: the window's median
+    /// consecutive slope is removed first (real bar motion is trend and must
+    /// not inflate the MAD), then deviations beyond sigmas × max(MAD, floor)
+    /// flag a spike. Returns the window's estimate of the sample, nil when
+    /// it looks like real motion. Scalar twin of `JointTrackRepair`'s
+    /// judgment.
+    private static func spikeReplacement(
+        at index: Int, in track: [Double], floor: Double
+    ) -> Double? {
+        let half = 2
+        let lower = max(0, index - half)
+        let upper = min(track.count - 1, index + half)
+        guard upper - lower + 1 >= 4 else { return nil }
+        let values = Array(track[lower ... upper])
+        let slopes = zip(values, values.dropFirst()).map { $1 - $0 }
+        let slope = median(of: slopes)
+        let detrended = values.enumerated().map { $1 - slope * Double(lower + $0 - index) }
+        let center = median(of: detrended)
+        let mad = median(of: detrended.map { abs($0 - center) })
+        guard abs(track[index] - center)
+            > AnalysisTuning.barTrackSpikeSigmas * max(mad, floor) else { return nil }
+        return center
+    }
+
+    private static func median(of values: [Double]) -> Double {
+        let sorted = values.sorted()
+        return sorted.count.isMultiple(of: 2)
+            ? (sorted[sorted.count / 2 - 1] + sorted[sorted.count / 2]) / 2
+            : sorted[sorted.count / 2]
     }
 
     /// Velocity from the full-rate bar track: rep boundary times are

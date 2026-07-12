@@ -266,6 +266,110 @@ struct SerializationTests {
         #expect(decoded.stanceWidthRatio == nil)
         #expect(decoded.bottomHipShiftRatio == nil)
         #expect(decoded.lockoutKneeDegrees == nil)
+        #expect(decoded.trackingJitter == nil)
+    }
+
+    @Test func jointConfidencesRoundTrip() throws {
+        var series = SyntheticSquat(repCount: 1).series()
+        series.frames[3].jointConfidences = [.leftKnee: 0.9, .rightWrist: 0.2]
+        series.frames[3].repairedJoints = [.leftHip]
+        let data = try JSONEncoder().encode(series)
+        let decoded = try JSONDecoder().decode(JointSeries.self, from: data)
+        #expect(decoded.frames[3].jointConfidences == [.leftKnee: 0.9, .rightWrist: 0.2])
+        #expect(decoded.frames[3].repairedJoints == [.leftHip])
+    }
+
+    /// Frames saved before per-joint confidence and track repair existed must
+    /// still decode (the new fields are optional).
+    @Test func frameSavedBeforeConfidenceStillDecodes() throws {
+        let legacy = """
+        {"time":0.5,"positions":["leftKnee",[0.1,0.2,0.3]],
+        "imagePoints":["leftKnee",[0.4,0.5]]}
+        """
+        let decoded = try JSONDecoder().decode(JointFrame.self, from: Data(legacy.utf8))
+        #expect(decoded.jointConfidences == nil)
+        #expect(decoded.repairedJoints == nil)
+    }
+}
+
+struct TrackingGateTests {
+    /// Gaussian joint noise injected only into frames inside `window` —
+    /// someone walking through the frame mid-set.
+    private func corrupt(
+        _ series: inout JointSeries, window: ClosedRange<TimeInterval>, seed: UInt64
+    ) {
+        var rng = SplitMix64(seed: seed)
+        for index in series.frames.indices
+        where window.contains(series.frames[index].time) {
+            for key in series.frames[index].positions.keys {
+                series.frames[index].positions[key]! += SIMD3(
+                    Float(rng.nextGaussian() * 0.03),
+                    Float(rng.nextGaussian() * 0.03),
+                    Float(rng.nextGaussian() * 0.03)
+                )
+            }
+        }
+    }
+
+    /// Clean 5-rep squat whose third rep (7.4–9.6 s) flickers.
+    private func seriesWithBrokenRep3() -> JointSeries {
+        var series = SyntheticSquat(repCount: 5).series()
+        corrupt(&series, window: 7.5 ... 9.5, seed: 11)
+        return series
+    }
+
+    @Test func frameJitterLocalizesBrokenStretch() {
+        let smoothed = JointSeriesSmoother.smoothed(seriesWithBrokenRep3())
+        // The whole-series median never sees the short bad stretch…
+        #expect(
+            TrackingQuality.boneLengthJitter(of: smoothed)
+                <= AnalysisTuning.trackingJitterGateRatio
+        )
+        // …the timeline pins it to the corrupted band.
+        let timeline = TrackingQuality.frameJitterTimeline(of: smoothed)
+        let inside = zip(smoothed.frames, timeline)
+            .filter { (8.0 ... 9.0).contains($0.0.time) }.compactMap(\.1).sorted()
+        let outside = zip(smoothed.frames, timeline)
+            .filter { $0.0.time < 6.5 || $0.0.time > 10.5 }.compactMap(\.1)
+        #expect(!inside.isEmpty && !outside.isEmpty)
+        #expect(inside[inside.count / 2] > AnalysisTuning.repTrackingJitterGateRatio)
+        #expect(outside.max()! < AnalysisTuning.repTrackingJitterGateRatio)
+    }
+
+    @Test func badStretchSuppressesOnlyAffectedReps() throws {
+        let analysis = SquatAnalyzer.analyze(seriesWithBrokenRep3())
+        #expect(analysis.reps.count == 5)
+        let rep3 = try #require(analysis.reps.first { $0.repNumber == 3 })
+        #expect((rep3.trackingJitter ?? 0) > AnalysisTuning.repTrackingJitterGateRatio)
+        // The suppressed rep is named in one info finding, and no form rule
+        // cites it — its angles are noise, not faults.
+        let partial = try #require(analysis.findings.first {
+            $0.title.contains("couldn't be tracked")
+        })
+        #expect(partial.severity == .info)
+        #expect(partial.repNumbers == [3])
+        #expect(analysis.findings.allSatisfy {
+            !$0.repNumbers.contains(3) || $0.title.contains("couldn't be tracked")
+        })
+    }
+
+    @Test func allRepsUntrackableFallsBackToGlobalFinding() {
+        // Long clean pauses keep the whole-series median under the global
+        // gate while both rep windows flicker (rep cycle = 1.2 + 1.0 + 4 s).
+        var series = SyntheticSquat(repCount: 2, pauseSeconds: 4).series()
+        corrupt(&series, window: 4.1 ... 6.1, seed: 12)
+        corrupt(&series, window: 10.3 ... 12.3, seed: 13)
+        let analysis = SquatAnalyzer.analyze(series)
+        #expect(analysis.findings.count == 1)
+        #expect(analysis.findings.first?.title == "Tracking too unstable to judge form")
+    }
+
+    @Test func cleanSetHasNoSuppressedReps() {
+        let analysis = SquatAnalyzer.analyze(SyntheticSquat(repCount: 5).series())
+        #expect(analysis.reps.allSatisfy {
+            ($0.trackingJitter ?? 0) <= AnalysisTuning.repTrackingJitterGateRatio
+        })
+        #expect(!analysis.findings.contains { $0.title.contains("couldn't be tracked") })
     }
 }
 

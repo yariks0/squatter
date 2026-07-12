@@ -37,10 +37,14 @@ checks" → `xcrun simctl shutdown all` and retry.
 - `Squatter/Capture/` — `CameraService` (video + LiDAR `DepthSidecar`),
   `FramingChecker`, live rep counter/voice coach hooks.
 - `Squatter/Analysis/` — pure, UI-free, compiles standalone on macOS:
-  `PoseExtractor` → `JointSeriesSmoother` → body-geometry scan +
-  `SkeletonCorrector` (squat+LiDAR: re-poses the pelvis to the 2D image
-  evidence, deepen-only, only at depth) → `RepSegmenter` →
-  `MetricsCalculator` (+`VelocityCalculator`) → `FormRules`, gated by
+  `PoseExtractor` → `JointTrackRepair` (despike + ≤2-frame gap bridge on
+  the raw series, *after* `TrackingQuality` measures it; touched joints
+  flagged, and flagged joints may never assert a fault) →
+  `JointSeriesSmoother` → body-geometry scan + `SkeletonCorrector`
+  (squat+LiDAR: re-poses the pelvis to the 2D image evidence, deepen-only,
+  only at depth) → `RepSegmenter` → `MetricsCalculator`
+  (+`VelocityCalculator`, which despikes its `barTrack` copy at
+  consumption) → `FormRules`, gated globally and per-rep by
   `TrackingQuality`. **All thresholds live in `AnalysisTuning.swift`.**
   `PlateDetector` (review-time plate classes by diameter+color),
   `FormFaultDetector` (per-frame fault flags coloring the video overlay),
@@ -78,7 +82,10 @@ checks" → `xcrun simctl shutdown all` and retry.
 - Image-space points come from the 2D pose request; the 3D observation's
   `pointInImage` drifts ~50 px.
 - `TrackingQuality.boneLengthJitter` gates form rules (> 0.01); it is
-  computed **before** skeleton correction. Clean squats: 0.0002–0.003.
+  computed **before** skeleton correction and track repair — both would
+  mask the flicker it measures. Clean squats: 0.0002–0.003. The per-rep
+  timeline gate (same 0.01) suppresses single flickering reps; dropouts
+  read as *clean* jitter, so it catches flicker, not occlusion.
 - Analysis JSON is persisted: new fields on `SquatAnalysis`/`RepMetrics`/
   `Finding`/`JointSeries`/`JointFrame` must be optional (old sessions
   decode).

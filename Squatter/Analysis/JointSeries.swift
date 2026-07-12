@@ -32,8 +32,29 @@ struct JointFrame: Codable, Sendable {
     /// Δmeters = Δnormalized-y × this. nil without LiDAR or when the depth
     /// reading was rejected; optional so old persisted analyses decode.
     var metersPerImageHeight: Float?
+    /// 2D-detector confidence per joint (the 3D observation exposes none).
+    /// A missing key means the joint's image point is the 3D re-projection —
+    /// the 2D detector never reported it. nil = analyzed before confidence
+    /// was stored; optional so old persisted analyses decode.
+    var jointConfidences: [BodyJoint: Float]?
+    /// Joints whose position/image point was repaired by `JointTrackRepair`
+    /// (despiked, or bridged through a short dropout) rather than detected.
+    /// Optional so old persisted analyses decode.
+    var repairedJoints: Set<BodyJoint>?
 
     func position(_ joint: BodyJoint) -> SIMD3<Float>? { positions[joint] }
+
+    /// Whether this joint's data is a hint rather than a detection: it was
+    /// repaired by `JointTrackRepair`, or the 2D detector reported it below
+    /// `AnalysisTuning.overlayConfidenceFloor` (a missing entry in a
+    /// confidence-carrying frame means the image point is the drifting 3D
+    /// re-projection). Frames saved before confidences existed count as
+    /// certain, so old sessions keep their full-strength overlay.
+    func isUncertain(_ joint: BodyJoint) -> Bool {
+        if repairedJoints?.contains(joint) == true { return true }
+        guard let jointConfidences else { return false }
+        return (jointConfidences[joint] ?? 0) < AnalysisTuning.overlayConfidenceFloor
+    }
 }
 
 /// One full-rate bar observation: the wrist midpoint's normalized image y

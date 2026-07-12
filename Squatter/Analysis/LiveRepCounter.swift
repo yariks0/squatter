@@ -91,6 +91,14 @@ struct LiveRepCounter {
     private var spanWindow: [(time: TimeInterval, value: Double)] = []
 
     private var lastSignal: Double?
+    /// Raw-signal tail feeding the transition median (see
+    /// `transitionSignal`).
+    private var recentSignals: [Double] = []
+    /// Previous sample's timestamp: on a monotone descent the transition
+    /// median equals the previous sample, so a detected entry crossing
+    /// actually happened one sample ago — reps start there, keeping the
+    /// descent clock (fast-descent call) as long as the ungated one.
+    private var lastSampleTime: TimeInterval?
     private var inRep = false
     private var repStart: TimeInterval = 0
     private var bottomTime: TimeInterval = 0
@@ -133,6 +141,9 @@ struct LiveRepCounter {
     private mutating func ingestSquat(_ sample: LivePoseSample) -> Event? {
         guard let signal = sample.hipMid?.y ?? lastSignal else { return nil }
         lastSignal = signal
+        let gated = transitionSignal(signal)
+        let entryTime = lastSampleTime ?? sample.time
+        lastSampleTime = sample.time
 
         var baseline = rollingMax(&baselineWindow, insert: signal, at: sample.time)
         if let calibratedStanding {
@@ -172,7 +183,7 @@ struct LiveRepCounter {
                     }
                 }
             }
-            guard signal > exit else { return nil }
+            guard gated > exit else { return nil }
             inRep = false
             guard sample.time - repStart >= AnalysisTuning.minimumRepDuration else { return nil }
             count += 1
@@ -199,8 +210,8 @@ struct LiveRepCounter {
                 faults.append(.slowAscent)
             }
             return .repCompleted(count: count, faults: faults)
-        } else if signal < entry {
-            beginRep(at: sample.time, signal: signal)
+        } else if gated < entry {
+            beginRep(at: entryTime, signal: signal)
             bottomKneeY = sample.kneeMid?.y
         }
         return nil
@@ -213,6 +224,9 @@ struct LiveRepCounter {
         }
         guard let signal = distance ?? lastSignal else { return nil }
         lastSignal = signal
+        let gated = transitionSignal(signal)
+        let entryTime = lastSampleTime ?? sample.time
+        lastSampleTime = sample.time
 
         let lockout = rollingMax(&baselineWindow, insert: signal, at: sample.time)
         guard lockout > 0.02 else { return nil }
@@ -225,7 +239,7 @@ struct LiveRepCounter {
                 bottomTime = sample.time
             }
             repSamples.append((sample.time, signal))
-            guard signal > exit else { return nil }
+            guard gated > exit else { return nil }
             inRep = false
             guard sample.time - repStart >= AnalysisTuning.minimumRepDuration else { return nil }
             count += 1
@@ -248,10 +262,25 @@ struct LiveRepCounter {
             }
             priorDepths.append(depth)
             return .repCompleted(count: count, faults: faults)
-        } else if signal < entry {
-            beginRep(at: sample.time, signal: signal)
+        } else if gated < entry {
+            beginRep(at: entryTime, signal: signal)
         }
         return nil
+    }
+
+    /// Median of the last `liveSignalMedianWindow` raw signals, used only
+    /// for the rep entry/exit crossings: one flickered sample can no longer
+    /// start or end a rep, while bottom depth, dwell, and the timing calls
+    /// keep reading the raw signal (a real one-sample chest bounce must stay
+    /// visible to the bounce call). Costs at most one sample (~100 ms at
+    /// 10 Hz) of crossing latency, symmetric on entry and exit, so rep
+    /// durations hold.
+    private mutating func transitionSignal(_ signal: Double) -> Double {
+        recentSignals.append(signal)
+        if recentSignals.count > AnalysisTuning.liveSignalMedianWindow {
+            recentSignals.removeFirst()
+        }
+        return recentSignals.sorted()[recentSignals.count / 2]
     }
 
     private mutating func beginRep(at time: TimeInterval, signal: Double) {

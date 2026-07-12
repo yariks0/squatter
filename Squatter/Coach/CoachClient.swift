@@ -1,15 +1,15 @@
 import Foundation
 
 enum CoachError: LocalizedError {
-    case missingKey
+    case unauthenticated
     case http(Int, String)
     case refused(String?)
     case badResponse
 
     var errorDescription: String? {
         switch self {
-        case .missingKey:
-            "Add your Anthropic API key to get AI coaching."
+        case .unauthenticated:
+            "Sign in again to get AI coaching."
         case let .http(status, message):
             "The coaching request failed (HTTP \(status)): \(message)"
         case let .refused(explanation):
@@ -20,16 +20,18 @@ enum CoachError: LocalizedError {
     }
 }
 
-/// Sends the set to the Anthropic Messages API and decodes the structured
-/// coaching report. Swift has no official Anthropic SDK, so this is a plain
-/// URLSession call.
+/// Sends the set to the backend coach proxy, which holds the Anthropic key
+/// and forwards to the Messages API. The request body is still built here —
+/// `CoachPrompt` embeds live analysis thresholds, so keeping it on the
+/// client avoids a rotting server duplicate — and the response is Anthropic's
+/// verbatim, so parsing is unchanged.
 enum CoachClient {
-    private static let endpoint = URL(string: "https://api.anthropic.com/v1/messages")!
+    private static let endpoint = BackendConfig.baseURL.appendingPathComponent("v1/coach")
     private static let model = "claude-opus-4-8"
 
     static func coach(analysis: SquatAnalysis, videoURL: URL) async throws -> CoachReport {
-        guard let apiKey = CoachKeyStore.load(), !apiKey.isEmpty else {
-            throw CoachError.missingKey
+        guard let token = AuthTokenStore.load(), !token.isEmpty else {
+            throw CoachError.unauthenticated
         }
         let keyframes = try await KeyframeExtractor.keyframes(for: analysis, videoURL: videoURL)
 
@@ -51,13 +53,13 @@ enum CoachClient {
         var request = URLRequest(url: endpoint)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue(apiKey, forHTTPHeaderField: "x-api-key")
-        request.setValue("2023-06-01", forHTTPHeaderField: "anthropic-version")
+        request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
         request.timeoutInterval = 300
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
         let (data, response) = try await URLSession.shared.data(for: request)
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        if status == 401 { throw CoachError.unauthenticated }
         guard status == 200 else {
             let message = errorMessage(from: data) ?? "no details"
             throw CoachError.http(status, message)

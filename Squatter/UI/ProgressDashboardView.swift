@@ -8,13 +8,47 @@ import SwiftUI
 /// schemes, one Soul Red accent reserved for the form-quality line, machined
 /// gray for volume, and gauge-style uppercase labels. Restraint over
 /// decoration — the flowing score curve is the only expressive element.
+/// A session flattened for the dashboard: works for both a local
+/// `WorkoutSession` and a pulled `RemoteWorkoutSummary`, so progress and the
+/// 1RM estimate span every device the account has trained on. `bestVelocity`
+/// is precomputed (the remote copy has no heavy analysis to decode).
+struct SessionSummary: Identifiable {
+    let id: String
+    let date: Date
+    let activity: ActivityType
+    let score: Int
+    let repCount: Int
+    let weightKg: Double?
+    let bestVelocity: Double?
+
+    init(_ session: WorkoutSession) {
+        id = SyncEngine.sessionID(forVideoFileName: session.videoFileName)
+        date = session.date
+        activity = session.activity
+        score = session.score
+        repCount = session.repCount
+        weightKg = session.weightKg
+        bestVelocity = session.analysis()?.reps.compactMap(\.meanConcentricVelocity).max()
+    }
+
+    init(_ summary: RemoteWorkoutSummary) {
+        id = summary.id
+        date = summary.date
+        activity = summary.activity
+        score = summary.score
+        repCount = summary.repCount
+        weightKg = summary.weightKg
+        bestVelocity = summary.reps().compactMap(\.meanConcentricVelocity).max()
+    }
+}
+
 struct ProgressDashboard: View {
-    let sessions: [WorkoutSession]
+    let sessions: [SessionSummary]
 
     /// nil = both lifts combined.
     @State private var scope: ActivityType? = nil
 
-    private var scopedSessions: [WorkoutSession] {
+    private var scopedSessions: [SessionSummary] {
         guard let scope else { return sessions }
         return sessions.filter { $0.activity == scope }
     }
@@ -100,7 +134,7 @@ struct ProgressDashboard: View {
 
     // MARK: Stat tiles
 
-    private func sessions(daysBack range: Range<Int>) -> [WorkoutSession] {
+    private func sessions(daysBack range: Range<Int>) -> [SessionSummary] {
         let today = calendar.startOfDay(for: .now)
         return scopedSessions.filter { session in
             let age = calendar.dateComponents(
@@ -146,7 +180,7 @@ struct ProgressDashboard: View {
             .frame(width: 1, height: 36)
     }
 
-    private func averageScore(of sessions: [WorkoutSession]) -> Double? {
+    private func averageScore(of sessions: [SessionSummary]) -> Double? {
         guard !sessions.isEmpty else { return nil }
         return Double(sessions.reduce(0) { $0 + $1.score }) / Double(sessions.count)
     }
@@ -246,8 +280,7 @@ struct ProgressDashboard: View {
         sessions.compactMap { session in
             guard session.activity == activity,
                   let load = session.weightKg,
-                  let best = session.analysis()?.reps
-                      .compactMap(\.meanConcentricVelocity).max()
+                  let best = session.bestVelocity
             else { return nil }
             return (load, best)
         }
@@ -426,28 +459,14 @@ private func zip<A, B>(_ a: A?, _ b: B?) -> (A, B)? {
         (5, 8, 71, .squat), (4, 12, 82, .benchPress), (3, 10, 79, .squat),
         (1, 10, 84, .squat), (0, 12, 88, .benchPress),
     ]
-    let sessions = profile.compactMap { day -> WorkoutSession? in
-        let rep = RepMetrics(
-            repNumber: 1, startTime: 0, endTime: 3, eccentricSeconds: 1.5,
-            concentricSeconds: 1.5, depthFraction: 0.6, kneeFlexionDegrees: 80,
-            hipBelowKneeDegrees: 5, torsoLeanDegrees: 35, kneeValgusRatio: 0.05,
-            asymmetryDegrees: 3
-        )
-        let analysis = SquatAnalysis(
-            reps: Array(repeating: rep, count: day.reps),
-            findings: [], score: day.score, usedDepth: true, bodyHeight: 1.80,
-            series: JointSeries(frames: [], bodyHeight: 1.80, usedDepth: true),
-            activity: day.activity
-        )
-        let recording = RecordingResult(
-            videoURL: URL(fileURLWithPath: "/mock/\(day.daysAgo).mov"),
-            depthSidecarURL: nil, duration: 40, usedLiDAR: true
-        )
-        return try? WorkoutSession(
+    let sessions = profile.map { day in
+        RemoteWorkoutSummary(
+            id: "mock-\(day.daysAgo)",
             date: Calendar.current.date(byAdding: .day, value: -day.daysAgo, to: .now) ?? .now,
-            recording: recording, analysis: analysis
+            activityRaw: day.activity.rawValue, score: day.score,
+            repCount: day.reps, usedLiDAR: true, weightKg: nil, repsData: Data("[]".utf8)
         )
-    }
+    }.map(SessionSummary.init)
     return List {
         Section("Progress") {
             ProgressDashboard(sessions: sessions.reversed())

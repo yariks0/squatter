@@ -3,11 +3,25 @@ import SwiftUI
 
 struct HomeView: View {
     @Environment(\.modelContext) private var modelContext
+    @Environment(AuthSession.self) private var auth
     @Query(sort: \WorkoutSession.date, order: .reverse) private var sessions: [WorkoutSession]
+    /// Sessions pulled from the backend that have no recording on this device
+    /// (another phone, or after a reinstall).
+    @Query(sort: \RemoteWorkoutSummary.date, order: .reverse)
+    private var remoteSummaries: [RemoteWorkoutSummary]
 
     @State private var path = NavigationPath()
     /// Recordings on disk that no saved session references yet.
     @State private var unanalyzed: [URL] = []
+
+    /// Local + remote sessions merged for the dashboard, local winning any
+    /// id collision (it carries the full analysis).
+    private var allSummaries: [SessionSummary] {
+        let local = sessions.map(SessionSummary.init)
+        let localIDs = Set(local.map(\.id))
+        let remote = remoteSummaries.map(SessionSummary.init).filter { !localIDs.contains($0.id) }
+        return (local + remote).sorted { $0.date > $1.date }
+    }
 
     // The recording rides inside the route: passing it through view state
     // races the navigation push and the destination can render before the
@@ -29,7 +43,7 @@ struct HomeView: View {
     var body: some View {
         NavigationStack(path: $path) {
             Group {
-                if sessions.isEmpty && unanalyzed.isEmpty {
+                if sessions.isEmpty && unanalyzed.isEmpty && remoteSummaries.isEmpty {
                     VStack {
                         ContentUnavailableView(
                             "No workouts yet",
@@ -41,9 +55,9 @@ struct HomeView: View {
                     }
                 } else {
                     List {
-                        if !sessions.isEmpty {
+                        if !allSummaries.isEmpty {
                             Section {
-                                ProgressDashboard(sessions: sessions)
+                                ProgressDashboard(sessions: allSummaries)
                             } header: {
                                 Text("Progress")
                             }
@@ -58,7 +72,7 @@ struct HomeView: View {
                                 .onDelete(perform: deleteAttempts)
                             }
                         }
-                        if !sessions.isEmpty {
+                        if !sessions.isEmpty || !remoteSummaries.isEmpty {
                             Section("History") {
                                 ForEach(sessions) { session in
                                     NavigationLink(value: session.persistentModelID) {
@@ -66,6 +80,12 @@ struct HomeView: View {
                                     }
                                 }
                                 .onDelete(perform: deleteSessions)
+                                // Remote-only sessions: no recording on this
+                                // device, so no report to open — shown for
+                                // continuity with a cloud marker.
+                                ForEach(remoteSummaries) { summary in
+                                    RemoteSummaryRow(summary: summary)
+                                }
                             }
                         }
                     }
@@ -76,6 +96,7 @@ struct HomeView: View {
                 }
             }
             .onAppear(perform: refreshUnanalyzed)
+            .task { await SyncEngine.shared.pull(into: modelContext) }
             .navigationTitle("")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -88,6 +109,9 @@ struct HomeView: View {
                     } label: {
                         Label("Body scan", systemImage: "person.and.background.dotted")
                     }
+                }
+                ToolbarItem(placement: .topBarTrailing) {
+                    accountMenu
                 }
             }
             .navigationDestination(for: Route.self) { route in
@@ -160,6 +184,20 @@ struct HomeView: View {
         }
     }
 
+    private var accountMenu: some View {
+        Menu {
+            if case let .loggedIn(email) = auth.state {
+                Section(email) {
+                    Button("Log out", role: .destructive) { auth.logout() }
+                }
+            } else {
+                Button("Log out", role: .destructive) { auth.logout() }
+            }
+        } label: {
+            Label("Account", systemImage: "person.crop.circle")
+        }
+    }
+
     private var recordButton: some View {
         Button {
             choosingActivity = true
@@ -182,10 +220,12 @@ struct HomeView: View {
         else { return }
         modelContext.insert(session)
         try? modelContext.save()
+        SyncEngine.shared.pushSession(session)
     }
 
     private func deleteSessions(at offsets: IndexSet) {
         for index in offsets {
+            SyncEngine.shared.deleteSession(videoFileName: sessions[index].videoFileName)
             sessions[index].deleteFiles()
             modelContext.delete(sessions[index])
         }
@@ -274,6 +314,7 @@ private struct SessionReportView: View {
     private func save(_ analysis: SquatAnalysis) {
         try? session.update(with: analysis)
         try? modelContext.save()
+        SyncEngine.shared.pushSession(session)
         // The stored coach report narrates the replaced analysis; drop it so
         // the report screen offers a fresh generation instead.
         if let videoURL = session.videoURL {
@@ -398,7 +439,35 @@ private struct SessionRow: View {
     }
 }
 
+/// A session synced from another device: the numbers are here, but the
+/// recording isn't, so the row is informational (no report to open).
+private struct RemoteSummaryRow: View {
+    let summary: RemoteWorkoutSummary
+
+    var body: some View {
+        HStack(spacing: 14) {
+            ScoreRing(score: summary.score, diameter: 44)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(summary.date.formatted(date: .abbreviated, time: .shortened))
+                    .font(.subheadline.bold())
+                HStack(spacing: 6) {
+                    Text(summary.activity.displayName)
+                    Text("· \(summary.repCount) rep\(summary.repCount == 1 ? "" : "s")")
+                    Label("Synced", systemImage: "icloud")
+                        .labelStyle(.titleAndIcon)
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+            Spacer()
+        }
+        .padding(.vertical, 2)
+        .foregroundStyle(.secondary)
+    }
+}
+
 #Preview {
     HomeView()
         .modelContainer(for: WorkoutSession.self, inMemory: true)
+        .environment(AuthSession())
 }

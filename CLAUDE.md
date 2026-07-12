@@ -5,6 +5,10 @@ Vision 3D-pose analysis, per-rep metrics + rule findings + optional LLM
 coaching, VBT bar velocity + 1RM estimate. Single dev (Yarik), commits go
 straight to `main`.
 
+A Go backend lives in `backend/` (passwordless email auth, Anthropic coach
+proxy, profile/progress sync, Postgres, Docker Compose). Login is required
+at launch. See "Backend & accounts" below and `backend/README.md`.
+
 **Before designing or implementing a feature, read `docs/architecture.md`**
 — it holds the dependency graph, pipeline stage table, persistence rules,
 measured device facts, feature recipes, and the real-footage replay
@@ -49,17 +53,53 @@ checks" → `xcrun simctl shutdown all` and retry.
   `PlateDetector` (review-time plate classes by diameter+color),
   `FormFaultDetector` (per-frame fault flags coloring the video overlay),
   and `LiveRepCounter` (2D live rep counting) also live here.
-- `Squatter/Coach/` — Anthropic API coaching: `CoachClient` +
+- `Squatter/Coach/` — Anthropic coaching: `CoachClient` +
   `KeyframeExtractor` (rep-bottom JPEGs); `CoachPrompt` embeds live
   thresholds; `CoachReport` mirrors `CoachPrompt.outputSchema` — keep in
-  sync. Report cached as `.coach` beside the video; API key in the Keychain
-  (`CoachKeyStore`).
+  sync. Report cached as `.coach` beside the video. `CoachClient` POSTs the
+  Anthropic body to the backend `/v1/coach` proxy with the session bearer —
+  the Anthropic key lives server-side now, not in the app.
+- `Squatter/Backend/` — the account/sync layer: `BackendConfig` (base URL
+  per build config), `AuthTokenStore` (Keychain bearer, was `CoachKeyStore`),
+  `ApiClient` (snake_case + fractional-second ISO8601, bearer injection,
+  401 → app-wide logout), `AuthSession` (`@Observable`, drives the gate),
+  `LoginModel` (UI-free login state machine), `SyncEngine` (push-on-save /
+  pull-on-launch). `RootView` (in `App/`) switches login vs `HomeView`.
 - `Squatter/UI/` — SwiftUI, Mazda-Kodo visual language (`Theme.swift`).
   `HomeView` owns all routes; review screen has weight field + plate
   calculator; `BodyScanView` = profile page + three-pose scan flow.
 - `Squatter/Models/` — `WorkoutSession` (SwiftData, stores full analysis
   JSON), `BodyGeometryProfile` + `PlateCatalog` (user-taught plates:
   diameter-first, color tie-break) as JSON in Application Support.
+
+## Backend & accounts
+
+- `backend/` is a Go API (stdlib `net/http`, pgx, goose self-migration,
+  Resend). Run it with `cd backend && make compose-up` (needs Docker);
+  `docker compose logs api` prints login codes in dev (empty `RESEND_API_KEY`
+  = codes logged, not emailed). Host Postgres is mapped to **5433** (5432 is
+  often taken). `make test` for unit tests; storage/handler tests want
+  `TEST_DATABASE_URL` (skipped otherwise). Full endpoint list + auth model in
+  `backend/README.md`.
+- **Coach proxy boundary**: the app still builds the entire Anthropic
+  Messages body (`CoachPrompt` embeds live `AnalysisTuning` thresholds — a
+  Go duplicate would rot). The backend validates shape/size, **pins the
+  model**, enforces a per-user daily quota, injects the key, and returns
+  Anthropic's response verbatim — so `CoachClient`'s parsing is unchanged.
+- **Sync scope**: only the portable slice syncs — per-session
+  `{date, activity, score, repCount, usedLiDAR, weightKg}` + the `RepMetrics`
+  array (server stores reps as opaque JSONB), plus the body-geometry and
+  plate-catalog documents. **Never** videos, `.depth`, `.coach`, or the heavy
+  `JointSeries`/`analysisData` blob. Pushes are fire-and-forget with
+  UserDefaults dirty markers; `SyncEngine.flush()` retries on launch. Pulled
+  remote-only sessions become `RemoteWorkoutSummary` (a separate `@Model`, so
+  the "`analysisData` is ground truth" invariant on `WorkoutSession` holds) —
+  they feed the dashboard + 1RM but have no openable report.
+- **iOS JSON**: `ApiClient` owns snake_case + fractional-second ISO8601 (Go
+  `time.Time` marshals RFC3339 *with* fractional seconds; stock `.iso8601`
+  rejects them). This is separate from the default encoders used for local
+  persistence — don't cross them. Profile documents ship as raw local-JSON
+  bytes (opaque to the server), so they bypass the typed coders.
 
 ## Domain facts that bite
 

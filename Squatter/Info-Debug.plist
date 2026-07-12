@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Debug-only base Info.plist: Xcode merges the generated INFOPLIST_KEY_*
+     values on top of this. It exists solely to let the Debug build talk to
+     the local backend over cleartext HTTP (localhost, or a Mac LAN IP for a
+     physical device). Release builds use the fully generated plist with
+     default ATS (HTTPS only), matching the https production base URL. -->
+<plist version="1.0">
+<dict>
+    <key>NSAppTransportSecurity</key>
+    <dict>
+        <key>NSAllowsArbitraryLoads</key>
+        <true/>
+    </dict>
+    <!-- iOS 14+ requires this to reach a backend on the local network by IP
+         (the Debug build talks to the Mac's LAN address). Without it the
+         connection fails with a misleading "offline" error. Debug-only. -->
+    <key>NSLocalNetworkUsageDescription</key>
+    <string>Squatter connects to your development backend on the local network.</string>
+</dict>
+</plist>

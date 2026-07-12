@@ -7,6 +7,13 @@ this doc disagree, fix the doc in the same commit.
 ## Dependency graph (who calls whom)
 
 ```
+App entry: SquatterApp → RootView (auth gate; login REQUIRED at launch)
+ ├─ AuthSession.state == .loggedOut → LoginView (LoginModel state machine)
+ └─ .loggedIn → HomeView (below). AuthSession(@Observable) holds the bearer
+      (AuthTokenStore/Keychain); ApiClient injects it and posts a global
+      logout notification on any 401. SyncEngine pushes on save / pulls on
+      launch through ApiClient. Backend = Go API in backend/ (see below).
+
 UI (HomeView routes)
  ├─ SetupGuideView → RecordView ──(RecordingResult)──▶ AttemptReviewView
  │        (live, while recording: FramingChecker → spoken framing gate;
@@ -23,7 +30,8 @@ UI (HomeView routes)
  │                  faulted parts red via FormFaultDetector (per-frame checks
  │                  with the FormRules thresholds); CoachSectionView →
  │                  CoachClient (KeyframeExtractor rep-bottom JPEGs →
- │                  Anthropic API), report cached by CoachReportStore
+ │                  backend /v1/coach proxy → Anthropic), cached by
+ │                  CoachReportStore
  ├─ BodyScanGuideView → RecordView → BodyScanResultView
  │        PoseExtractor.extract → SquatAnalyzer.profileScan → BodyGeometryProfile(Store)
  └─ SessionReportView (reopens saved sessions; can re-analyze)
@@ -81,8 +89,48 @@ Type→file exceptions (everything else lives in `<TypeName>.swift`):
   sidecar) — the recordings themselves, base-named by `FileLocations`.
   `<uuid>.coach` beside them caches the fetched LLM report
   (`CoachReportStore`) until the user regenerates it.
-- Anthropic API key: Keychain via `CoachKeyStore` — never UserDefaults,
-  source, or the binary.
+- Session bearer token: Keychain via `AuthTokenStore` (replaced
+  `CoachKeyStore` — the Anthropic key now lives on the backend). Never
+  UserDefaults, source, or the binary.
+- `RemoteWorkoutSummary` (SwiftData, same store): sessions pulled from the
+  backend that have no local recording. Deliberately **not** a
+  `WorkoutSession` — that type promises `analysisData` is re-render/re-analyze
+  ground truth, which a summary can't honor. Carries only
+  `{date, activity, score, repCount, usedLiDAR, weightKg, repsData}`; feeds
+  the dashboard + 1RM via `SessionSummary`, no openable report.
+- Sync dirty markers in UserDefaults: `sync.pendingSessions`
+  (id→payload), `sync.pendingDeletes`, `sync.bodyProfileDirty`,
+  `sync.plateCatalogDirty`. `SyncEngine.flush()` retries them on launch.
+
+## Backend (`backend/`)
+
+Go API (stdlib `net/http` ServeMux, pgx, goose self-migration, Resend),
+Docker Compose (Postgres 16, host port **5433**). See `backend/README.md`
+for endpoints and the auth model. Key facts that bite:
+
+- **Coach proxy is a guarded pass-through, not a reimplementation**: the app
+  sends the whole Anthropic Messages body; the server allowlists top-level
+  fields, **overwrites `model`** with `COACH_MODEL`, caps `max_tokens`/image
+  count/size, enforces a per-user daily quota (`coach_usage`), injects
+  `ANTHROPIC_API_KEY`, and returns the upstream response byte-for-byte.
+  `CoachPrompt` stays in Swift so live `AnalysisTuning` thresholds aren't
+  duplicated.
+- **OTP auth**: 6-digit codes, HMAC-SHA256 + per-code salt at rest, 10-min
+  expiry, 5-attempt cap, single-use, 60 s resend cooldown + 5/hr per email +
+  10/min per IP. Users created lazily on first verify (no existence leak).
+  Sessions are opaque bearer tokens (SHA-256 at rest), sliding 90-day expiry
+  touched ≤ once/day.
+- **Reps + profiles are opaque JSONB** server-side — their schemas evolve in
+  Swift (optional-fields law) with no server migration. `reps` round-trips
+  through the ApiClient snake_case coders; profile documents are stored as
+  the app's raw local JSON bytes.
+- Timeouts: 30 s on every route **except** `/v1/coach` (310 s > the 300 s
+  upstream call). Any future reverse proxy/LB must raise its idle timeout to
+  match.
+- Dev mode: empty `RESEND_API_KEY` ⇒ login codes are logged to stdout, no
+  email account needed. Simulator reaches `localhost:8080` directly; a
+  physical device needs the Mac's LAN IP in `BackendConfig` + a Debug ATS
+  exception.
 - `UserDefaults`: `lastWeightKg.<activity>` prefill; `SetVoice` enabled flag.
 - Dates in hand-written JSON: Swift default = seconds since 2001-01-01.
 

@@ -14,27 +14,14 @@ struct CoachSectionView: View {
     }
 
     @State private var phase: Phase = .idle
-    @State private var showKeyEntry = false
-    @State private var keyDraft = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack {
-                Text("AI coach")
-                    .font(.headline)
-                Spacer()
-                Menu {
-                    Button("Set API key…") { promptForKey() }
-                    Button("Remove API key", role: .destructive) { CoachKeyStore.delete() }
-                } label: {
-                    Image(systemName: "key")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                }
-            }
+            Text("AI coach")
+                .font(.headline)
+                .frame(maxWidth: .infinity, alignment: .leading)
             content
         }
-        .sheet(isPresented: $showKeyEntry) { keyEntrySheet }
         .onAppear {
             if case .idle = phase, let stored = CoachReportStore.load(for: videoURL) {
                 phase = .done(stored)
@@ -52,7 +39,7 @@ struct CoachSectionView: View {
                 Label("Get AI coaching", systemImage: "sparkles")
             }
             .buttonStyle(KodoProminentButtonStyle(fullWidth: true, compact: true))
-            Text("Sends this set's metrics and a few keyframes to Claude. Needs network and your Anthropic API key.")
+            Text("Sends this set's metrics and a few keyframes to Claude for a form review. Needs a network connection.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         case .running:
@@ -127,10 +114,6 @@ struct CoachSectionView: View {
     }
 
     private func run() {
-        guard CoachKeyStore.load()?.isEmpty == false else {
-            promptForKey()
-            return
-        }
         phase = .running
         Task {
             do {
@@ -141,39 +124,5 @@ struct CoachSectionView: View {
                 phase = .failed(error.localizedDescription)
             }
         }
-    }
-
-    private func promptForKey() {
-        keyDraft = CoachKeyStore.load() ?? ""
-        showKeyEntry = true
-    }
-
-    private var keyEntrySheet: some View {
-        NavigationStack {
-            Form {
-                Section {
-                    SecureField("sk-ant-…", text: $keyDraft)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                } footer: {
-                    Text("Stored in the device Keychain only. Create a key in the Anthropic Console.")
-                }
-            }
-            .navigationTitle("Anthropic API key")
-            .navigationBarTitleDisplayMode(.inline)
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Save") {
-                        CoachKeyStore.save(keyDraft)
-                        showKeyEntry = false
-                    }
-                    .disabled(keyDraft.trimmingCharacters(in: .whitespaces).isEmpty)
-                }
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { showKeyEntry = false }
-                }
-            }
-        }
-        .presentationDetents([.medium])
     }
 }

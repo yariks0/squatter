@@ -140,6 +140,7 @@ struct PlatePickerView: View {
                     )
                     catalog.plates.append(plate)
                     try? PlateCatalogStore.save(catalog)
+                    SyncEngine.shared.pushPlateCatalog()
                     counts[plate] = 1
                     syncTotal()
                 }
@@ -292,6 +293,9 @@ struct PlateCatalogEditorView: View {
         }
         .navigationTitle("Your plates")
         .navigationBarTitleDisplayMode(.inline)
-        .onDisappear { try? PlateCatalogStore.save(catalog) }
+        .onDisappear {
+            try? PlateCatalogStore.save(catalog)
+            SyncEngine.shared.pushPlateCatalog()
+        }
     }
 }

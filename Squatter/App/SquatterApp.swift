@@ -3,10 +3,14 @@ import SwiftUI
 
 @main
 struct SquatterApp: App {
+    @State private var auth = AuthSession()
+
     var body: some Scene {
         WindowGroup {
-            HomeView()
+            RootView()
+                .environment(auth)
+                .task { auth.start() }
         }
-        .modelContainer(for: WorkoutSession.self)
+        .modelContainer(for: [WorkoutSession.self, RemoteWorkoutSummary.self])
     }
 }

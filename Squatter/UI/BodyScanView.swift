@@ -202,6 +202,7 @@ struct BodyScanResultView: View {
                         try? BodyGeometryProfileStore.save(BodyGeometryProfile(
                             metric: metric, scannedAt: .now, heightMeters: height
                         ))
+                        SyncEngine.shared.pushBodyProfile()
                         onDone()
                     } label: {
                         Label("Save profile", systemImage: "checkmark")

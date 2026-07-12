@@ -1,0 +1,33 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: squatter
+      POSTGRES_PASSWORD: squatter
+      POSTGRES_DB: squatter
+    ports:
+      # Host 5433 (5432 is often taken by another local Postgres); the api
+      # container still reaches the db by service name on 5432 internally.
+      - "5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U squatter"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build: .
+    env_file: .env
+    environment:
+      # Override the .env DATABASE_URL to reach the db service by name.
+      DATABASE_URL: postgres://squatter:squatter@db:5432/squatter?sslmode=disable
+    ports:
+      - "8080:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  pgdata:

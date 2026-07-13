@@ -12,7 +12,7 @@ App entry: SquatterApp → RootView (auth gate; login REQUIRED at launch)
  └─ .loggedIn → HomeView (below). AuthSession(@Observable) holds the bearer
       (AuthTokenStore/Keychain); ApiClient injects it and posts a global
       logout notification on any 401. SyncEngine pushes on save / pulls on
-      launch through ApiClient. Backend = Go API in backend/ (see below).
+      launch through ApiClient. Backend = Go API in apps/backend/ (see below).
 
 UI (HomeView routes)
  ├─ SetupGuideView → RecordView ──(RecordingResult)──▶ AttemptReviewView
@@ -102,10 +102,10 @@ Type→file exceptions (everything else lives in `<TypeName>.swift`):
   (id→payload), `sync.pendingDeletes`, `sync.bodyProfileDirty`,
   `sync.plateCatalogDirty`. `SyncEngine.flush()` retries them on launch.
 
-## Backend (`backend/`)
+## Backend (`apps/backend/`)
 
 Go API (stdlib `net/http` ServeMux, pgx, goose self-migration, Resend),
-Docker Compose (Postgres 16, host port **5433**). See `backend/README.md`
+Docker Compose (Postgres 18, host port **5433**). See `apps/backend/README.md`
 for endpoints and the auth model. Key facts that bite:
 
 - **Coach proxy is a guarded pass-through, not a reimplementation**: the app
@@ -197,10 +197,10 @@ for endpoints and the auth model. Key facts that bite:
    that decodes `SquatAnalysis` and re-runs any pipeline stage:
 
    ```sh
-   swiftc -O -o replay main.swift Squatter/Analysis/*.swift \
-     Squatter/Models/ActivityType.swift Squatter/Models/FormHintTopic.swift \
-     Squatter/Models/BodyGeometryProfile.swift Squatter/Models/PlateCatalog.swift \
-     Squatter/Capture/DepthSidecar.swift
+   swiftc -O -o replay main.swift apps/ios/Squatter/Analysis/*.swift \
+     apps/ios/Squatter/Models/ActivityType.swift apps/ios/Squatter/Models/FormHintTopic.swift \
+     apps/ios/Squatter/Models/BodyGeometryProfile.swift apps/ios/Squatter/Models/PlateCatalog.swift \
+     apps/ios/Squatter/Capture/DepthSidecar.swift
    ```
 
    The stored `series` is the device-extracted (smoothed) ground truth;

@@ -1,6 +1,6 @@
 services:
   db:
-    image: postgres:16-alpine
+    image: postgres:18-alpine
     environment:
       POSTGRES_USER: squatter
       POSTGRES_PASSWORD: squatter
@@ -10,7 +10,9 @@ services:
       # container still reaches the db by service name on 5432 internally.
       - "5433:5432"
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      # Postgres 18+ images store data in a major-version subdirectory and want
+      # the volume mounted at the parent (not .../data) so pg_upgrade can work.
+      - pgdata:/var/lib/postgresql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U squatter"]
       interval: 3s

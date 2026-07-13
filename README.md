@@ -12,12 +12,12 @@ app never demands more depth than the lifter's measured mobility.
 
 ## How it works
 
-1. **Capture** (`Squatter/Capture/`) — `AVCaptureSession` records HEVC video.
+1. **Capture** (`apps/ios/Squatter/Capture/`) — `AVCaptureSession` records HEVC video.
    On LiDAR devices (iPhone 12 Pro and later Pros) synchronized depth frames
    are written to a `.depth` sidecar. Live 2D pose checks drive a
    full-body-in-frame indicator plus an optional voice coach that counts
    reps and calls out faults as you lift.
-2. **Analysis** (`Squatter/Analysis/`) — after the set, Vision's
+2. **Analysis** (`apps/ios/Squatter/Analysis/`) — after the set, Vision's
    `VNDetectHumanBodyPose3DRequest` runs over the video, producing a
    17-joint 3D series (sidecar depth is sampled directly off the depth maps
    for metric scale — never fed to Vision, which crashes on depth without
@@ -25,7 +25,7 @@ app never demands more depth than the lifter's measured mobility.
    per-rep metrics (depth, torso lean, knee valgus, tempo, symmetry, bar
    velocity) → rule-based findings. Thresholds live in
    `AnalysisTuning.swift`.
-3. **Report** (`Squatter/UI/`, `Squatter/Coach/`) — score, per-rep cards,
+3. **Report** (`apps/ios/Squatter/UI/`, `apps/ios/Squatter/Coach/`) — score, per-rep cards,
    video playback with the tracked skeleton overlaid (faulted body parts
    drawn red), and optional coaching notes from the Anthropic API built on
    the metrics and rep-bottom keyframes. Sessions persist via SwiftData
@@ -44,8 +44,8 @@ Requires Xcode 26+. The `.xcodeproj` is generated and gitignored:
 
 ```sh
 brew install xcodegen
-xcodegen generate
-open Squatter.xcodeproj
+(cd apps/ios && xcodegen generate)
+open apps/ios/Squatter.xcodeproj
 ```
 
 Run on a device (camera required; analysis of an existing recording works in
@@ -56,7 +56,7 @@ expires after 7 days — re-run from Xcode.
 Tests (pure-Swift analysis pipeline against synthetic squat fixtures):
 
 ```sh
-xcodebuild -project Squatter.xcodeproj -scheme Squatter \
+xcodebuild -project apps/ios/Squatter.xcodeproj -scheme Squatter \
   -destination 'platform=iOS Simulator,name=iPhone 17 Pro' test
 ```
 

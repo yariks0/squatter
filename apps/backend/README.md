@@ -1,16 +1,24 @@
 # Squatter backend
 
 Go API for the Squatter iOS app: passwordless email auth, an Anthropic coach
-proxy (holds the API key server-side), and profile/progress sync. Postgres
+proxy (holds the API key server-side), and profile/progress sync. Postgres 18
 for storage, Docker Compose for local/MVP deployment.
+
+Lives at `apps/backend/` in the monorepo — run the commands below from there
+(or their `make backend-*` / `make compose-*` wrappers from the repo root).
 
 ## Quick start (dev — no email account needed)
 
 ```sh
 cp .env.example .env          # leave RESEND_API_KEY empty → codes go to the log
-make compose-up               # postgres + api, self-migrates on boot
+make compose-up               # postgres 18 + api, self-migrates on boot
 curl localhost:8080/healthz   # {"status":"ok"}
 ```
+
+> Upgrading from an older Postgres image? A named `pgdata` volume created by
+> an earlier major version won't start under Postgres 18. Dev data is
+> disposable, so reset it: `docker compose down -v && make compose-up`
+> (goose re-applies every migration on the fresh volume).
 
 Log in from the command line:
 

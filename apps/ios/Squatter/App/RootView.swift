@@ -16,9 +16,10 @@ struct RootView: View {
             }
         case .loggedOut:
             LoginView(auth: auth)
-        case .loggedIn:
+        case .loggedIn, .offline:
             // HomeView owns the model context, so it drives the pull; here
-            // we just retry any pushes that were queued while offline.
+            // we just retry any pushes that were queued while offline. In
+            // offline mode both are guarded by the missing token and no-op.
             HomeView()
                 .task { await SyncEngine.shared.flush() }
         }

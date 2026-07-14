@@ -39,6 +39,7 @@ struct LoginView: View {
                 }
 
                 card
+                offlineOption
                 Spacer()
                 Spacer()
             }
@@ -63,6 +64,30 @@ struct LoginView: View {
         }
         .animation(.easeOut(duration: 0.2), value: model.step)
         .animation(.easeOut(duration: 0.2), value: model.errorMessage)
+    }
+
+    /// Skip the gate and use the app locally. Sync and coaching stay dark
+    /// until the user signs in, but recording and offline analysis work.
+    private var offlineOption: some View {
+        VStack(spacing: 12) {
+            HStack(spacing: 12) {
+                line
+                Text("or")
+                    .font(.footnote)
+                    .foregroundStyle(Kodo.inkSecondary)
+                line
+            }
+            Button("Continue offline") { auth.enterOfflineMode() }
+                .font(.subheadline.weight(.medium))
+                .foregroundStyle(Kodo.inkSecondary)
+        }
+        .padding(.top, 4)
+    }
+
+    private var line: some View {
+        Rectangle()
+            .fill(Kodo.hairline)
+            .frame(height: 1)
     }
 
     private var emailStep: some View {

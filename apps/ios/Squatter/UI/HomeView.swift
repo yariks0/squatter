@@ -186,11 +186,16 @@ struct HomeView: View {
 
     private var accountMenu: some View {
         Menu {
-            if case let .loggedIn(email) = auth.state {
+            switch auth.state {
+            case let .loggedIn(email):
                 Section(email) {
                     Button("Log out", role: .destructive) { auth.logout() }
                 }
-            } else {
+            case .offline:
+                Section("Offline") {
+                    Button("Sign in to sync") { auth.showLogin() }
+                }
+            case .checking, .loggedOut:
                 Button("Log out", role: .destructive) { auth.logout() }
             }
         } label: {

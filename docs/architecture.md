@@ -8,7 +8,10 @@ this doc disagree, fix the doc in the same commit.
 
 ```
 App entry: SquatterApp → RootView (auth gate; login REQUIRED at launch)
- ├─ AuthSession.state == .loggedOut → LoginView (LoginModel state machine)
+ ├─ AuthSession.state == .loggedOut → LoginView (LoginModel state machine;
+ │      "Continue offline" → .offline)
+ ├─ .offline → HomeView with no bearer (token-gated sync/coach no-op; sticky
+ │      via UserDefaults auth.offlineMode so relaunch skips the gate)
  └─ .loggedIn → HomeView (below). AuthSession(@Observable) holds the bearer
       (AuthTokenStore/Keychain); ApiClient injects it and posts a global
       logout notification on any 401. SyncEngine pushes on save / pulls on
@@ -131,6 +134,15 @@ for endpoints and the auth model. Key facts that bite:
   email account needed. Simulator reaches `localhost:8080` directly; a
   physical device needs the Mac's LAN IP in `BackendConfig` + a Debug ATS
   exception.
+- **Offline mode** (`AuthSession.offline`): a "Continue offline" button on the
+  login screen enters `HomeView` with no session. Only token-gated backend
+  features go dark — cloud sync (`SyncEngine.flush`/`pull` early-return without
+  a token; pushes still queue and flush on later sign-in), remote session
+  summaries, and LLM coaching (`ApiClient` throws `.unauthenticated`, report
+  fails cleanly). Everything on-device is unchanged: recording, the full
+  offline analysis pipeline + rule findings + VBT/1RM, local persistence, body
+  scan, plate catalog. Account menu → "Sign in to sync" (`showLogin`) leaves it;
+  `verify`/`logout` clear the sticky `auth.offlineMode` flag.
 - `UserDefaults`: `lastWeightKg.<activity>` prefill; `SetVoice` enabled flag.
 - Dates in hand-written JSON: Swift default = seconds since 2001-01-01.
 

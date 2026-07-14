@@ -7,8 +7,9 @@ straight to `main`.
 
 This is a monorepo: the iOS app lives in `apps/ios/`, a Go backend in
 `apps/backend/` (passwordless email auth, Anthropic coach proxy,
-profile/progress sync, Postgres, Docker Compose). Login is required at
-launch. See "Backend & accounts" below and `apps/backend/README.md`. A root
+profile/progress sync, Postgres, Docker Compose). Login is the default at
+launch, with a "Continue offline" path for backend-free local use. See
+"Backend & accounts" below and `apps/backend/README.md`. A root
 `Makefile` wraps the common iOS/backend tasks.
 
 **Before designing or implementing a feature, read `docs/architecture.md`**
@@ -68,7 +69,10 @@ checks" → `xcrun simctl shutdown all` and retry.
   `ApiClient` (snake_case + fractional-second ISO8601, bearer injection,
   401 → app-wide logout), `AuthSession` (`@Observable`, drives the gate),
   `LoginModel` (UI-free login state machine), `SyncEngine` (push-on-save /
-  pull-on-launch). `RootView` (in `App/`) switches login vs `HomeView`.
+  pull-on-launch). `RootView` (in `App/`) switches login vs `HomeView`. A
+  "Continue offline" button enters `AuthSession.offline` (sticky
+  `auth.offlineMode`), running the app with no bearer — only token-gated sync
+  and coaching go dark; all on-device recording/analysis is unchanged.
 - `apps/ios/Squatter/UI/` — SwiftUI, Mazda-Kodo visual language (`Theme.swift`).
   `HomeView` owns all routes; review screen has weight field + plate
   calculator; `BodyScanView` = profile page + three-pose scan flow.

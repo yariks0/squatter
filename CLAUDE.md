@@ -89,6 +89,12 @@ checks" → `xcrun simctl shutdown all` and retry.
   Host **Postgres 18** is mapped to **5433** (5432 is often taken). `make test`
   for unit tests; storage/handler tests want `TEST_DATABASE_URL` (skipped
   otherwise). Full endpoint list + auth model in `apps/backend/README.md`.
+- **Production** is a separate `docker-compose.prod.yml` (not an override of
+  the dev one): Caddy TLS edge → api → db, with db and api unpublished. It
+  runs on a Docker VM; deploy is `git pull && make prod-up` on the box.
+  Secrets live **only** in `apps/backend/.env.prod` there (gitignored,
+  `.dockerignore`d) — `.env.prod.example` documents each one. Runbook in
+  `apps/backend/README.md`, design notes in `docs/architecture.md`.
 - **Coach proxy boundary**: the app still builds the entire Anthropic
   Messages body (`CoachPrompt` embeds live `AnalysisTuning` thresholds — a
   Go duplicate would rot). The backend validates shape/size, **pins the

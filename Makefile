@@ -2,7 +2,8 @@
 # apps/backend. Backend targets delegate to apps/backend/Makefile.
 .PHONY: help \
 	ios-generate ios-test ios-build \
-	backend-run backend-test compose-up compose-down psql
+	backend-run backend-test compose-up compose-down psql \
+	prod-up prod-down prod-logs prod-ps prod-backup
 
 IOS_DIR := apps/ios
 IOS_PROJECT := $(IOS_DIR)/Squatter.xcodeproj
@@ -11,6 +12,7 @@ SIM := platform=iOS Simulator,name=iPhone 17 Pro
 help:
 	@echo "iOS:     ios-generate  ios-test  ios-build"
 	@echo "Backend: backend-run  backend-test  compose-up  compose-down  psql"
+	@echo "Prod:    prod-up  prod-down  prod-logs  prod-ps  prod-backup  (on the VM)"
 
 # --- iOS (XcodeGen + xcodebuild) ---------------------------------------------
 ios-generate:
@@ -39,3 +41,19 @@ compose-down:
 
 psql:
 	$(MAKE) -C apps/backend psql
+
+# --- Production (run these on the droplet; see apps/backend/README.md) --------
+prod-up:
+	$(MAKE) -C apps/backend prod-up
+
+prod-down:
+	$(MAKE) -C apps/backend prod-down
+
+prod-logs:
+	$(MAKE) -C apps/backend prod-logs
+
+prod-ps:
+	$(MAKE) -C apps/backend prod-ps
+
+prod-backup:
+	$(MAKE) -C apps/backend prod-backup

@@ -1,0 +1,35 @@
+# TLS edge for the API. Caddy provisions and renews a Let's Encrypt cert for
+# API_DOMAIN automatically — that needs ports 80 and 443 reachable from the
+# internet and API_DOMAIN's A record already pointing at this droplet.
+#
+# API_DOMAIN and ACME_EMAIL are injected by docker-compose.prod.yml.
+{
+	# Where Let's Encrypt sends expiry warnings.
+	email {$ACME_EMAIL}
+
+	servers {
+		# Caddy is the edge: real clients are public, so their own
+		# X-Forwarded-For must never be believed. Only private-range peers
+		# (nothing, here) count as proxies.
+		trusted_proxies static private_ranges
+	}
+}
+
+{$API_DOMAIN} {
+	encode zstd gzip
+
+	reverse_proxy api:8080 {
+		# A coach call blocks on Anthropic for minutes before the API sends
+		# response headers. Caddy's default is no timeout at all; this bounds
+		# a hung upstream while staying above the API's own 310 s deadline,
+		# so the API is always the one that decides to give up.
+		transport http {
+			response_header_timeout 320s
+		}
+	}
+
+	log {
+		output stdout
+		format json
+	}
+}

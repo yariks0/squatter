@@ -1,0 +1,94 @@
+# Production stack for a single Docker VM: Caddy terminates TLS on 80/443 and
+# proxies to the API; the API and Postgres are reachable only on the internal
+# compose network. Deliberately separate from docker-compose.yml rather than an
+# override of it — dev publishes ports and hardcodes a password, and every one
+# of those lines is wrong here.
+#
+# Run it via `make prod-up` (which passes --env-file .env.prod), not a bare
+# `docker compose up`: the ${...} below are interpolated from that file.
+
+name: squatter
+
+# Docker's default json-file driver never rotates — unbounded logs fill the
+# droplet's disk and take Postgres down with them.
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  db:
+    image: postgres:18-alpine
+    restart: unless-stopped
+    logging: *logging
+    environment:
+      POSTGRES_USER: squatter
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env.prod}
+      POSTGRES_DB: squatter
+    # No `ports:` on purpose. Publishing 5432 would expose Postgres to the
+    # internet — Docker writes its own iptables rules and bypasses ufw.
+    volumes:
+      # Postgres 18+ stores data in a major-version subdirectory and wants the
+      # volume at the parent (not .../data) so pg_upgrade can work.
+      - pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U squatter -d squatter"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  api:
+    build: .
+    restart: unless-stopped
+    logging: *logging
+    env_file: .env.prod
+    environment:
+      # These win over .env.prod (compose applies `environment` last), so the
+      # deployment's shape isn't something the secrets file can get wrong.
+      DATABASE_URL: postgres://squatter:${POSTGRES_PASSWORD}@db:5432/squatter?sslmode=disable
+      ENV: prod
+      # Caddy is the only peer the API ever sees; without this the IP rate
+      # limiter buckets every caller under Caddy's container address.
+      TRUST_PROXY: "true"
+      PORT: "8080"
+    expose:
+      - "8080"
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      # Distroless has no shell or curl; the binary probes itself.
+      test: ["CMD", "/api", "-healthcheck"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    logging: *logging
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp" # HTTP/3
+    environment:
+      # Only what the Caddyfile reads — not env_file: .env.prod, which would
+      # hand Caddy the Anthropic and Resend keys for no reason.
+      API_DOMAIN: ${API_DOMAIN:?set API_DOMAIN in .env.prod}
+      ACME_EMAIL: ${ACME_EMAIL:?set ACME_EMAIL in .env.prod}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # Issued certificates live here. Losing this volume means re-issuing on
+      # every restart, which will hit Let's Encrypt's rate limits.
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - api
+
+volumes:
+  pgdata:
+  caddy_data:
+  caddy_config:

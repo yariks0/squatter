@@ -108,8 +108,10 @@ Type→file exceptions (everything else lives in `<TypeName>.swift`):
 ## Backend (`apps/backend/`)
 
 Go API (stdlib `net/http` ServeMux, pgx, goose self-migration, Resend),
-Docker Compose (Postgres 18, host port **5433**). See `apps/backend/README.md`
-for endpoints and the auth model. Key facts that bite:
+Docker Compose (Postgres 18, host port **5433** in dev). Two compose files:
+`docker-compose.yml` (dev) and `docker-compose.prod.yml` (single Docker VM —
+Caddy TLS edge, db + api unpublished; see "Production deployment" below). See
+`apps/backend/README.md` for endpoints and the auth model. Key facts that bite:
 
 - **Coach proxy is a guarded pass-through, not a reimplementation**: the app
   sends the whole Anthropic Messages body; the server allowlists top-level
@@ -128,8 +130,14 @@ for endpoints and the auth model. Key facts that bite:
   through the ApiClient snake_case coders; profile documents are stored as
   the app's raw local JSON bytes.
 - Timeouts: 30 s on every route **except** `/v1/coach` (310 s > the 300 s
-  upstream call). Any future reverse proxy/LB must raise its idle timeout to
-  match.
+  upstream call). Any reverse proxy/LB must raise its idle timeout to match —
+  prod's Caddy sets `response_header_timeout 320s` for exactly this.
+- **`TRUST_PROXY` decides where the IP rate limiter reads the client address.**
+  Unset (dev, direct exposure) ⇒ `RemoteAddr`. `true` (prod, behind Caddy) ⇒
+  the **last** `X-Forwarded-For` entry, which is the hop the proxy appends and
+  therefore the one a client cannot forge. Both halves matter: without it every
+  caller shares the proxy's bucket; with it on a directly-exposed server anyone
+  can forge their bucket key.
 - Dev mode: empty `RESEND_API_KEY` ⇒ login codes are logged to stdout, no
   email account needed. Simulator reaches `localhost:8080` directly; a
   physical device needs the Mac's LAN IP in `BackendConfig` + a Debug ATS
@@ -143,6 +151,31 @@ for endpoints and the auth model. Key facts that bite:
   offline analysis pipeline + rule findings + VBT/1RM, local persistence, body
   scan, plate catalog. Account menu → "Sign in to sync" (`showLogin`) leaves it;
   `verify`/`logout` clear the sticky `auth.offlineMode` flag.
+
+### Production deployment
+
+One Docker VM (DigitalOcean droplet), `docker-compose.prod.yml`:
+`caddy` (:80/:443, automatic Let's Encrypt) → `api` (:8080, internal) → `db`
+(internal only, never published). Deploy = `git pull && make prod-up` on the
+box, which rebuilds the image from the working tree; the API self-migrates on
+boot, so there is no migrate step. Full runbook in `apps/backend/README.md`.
+
+- **All secrets live in `apps/backend/.env.prod` on the droplet** — gitignored
+  and `.dockerignore`d. `make prod-up` passes it to compose *twice*: as
+  `--env-file` (so the `${...}` in the compose file interpolate) and as the api
+  service's `env_file` (so the process sees them). Editing it needs
+  `make prod-restart` (`--force-recreate`); compose only reads it at
+  container-create time.
+- **Empty `RESEND_API_KEY` is a prod footgun**, not just a dev convenience: it
+  silently downgrades to logging login codes, making every account reachable by
+  anyone with log access.
+- **`POSTGRES_PASSWORD` binds only when the `pgdata` volume is created.**
+  Rotating it means `ALTER USER` *and* the env file, together.
+- The image is distroless (no shell), so the container healthcheck re-runs the
+  binary as `/api -healthcheck`, which probes `/healthz` and exits 0/1. That
+  branch is handled before `config.Load` — a probe has no `DATABASE_URL`.
+- DigitalOcean: use a **Cloud Firewall**, not `ufw` — Docker writes its own
+  iptables rules and bypasses `ufw`.
 - `UserDefaults`: `lastWeightKg.<activity>` prefill; `SetVoice` enabled flag.
 - Dates in hand-written JSON: Swift default = seconds since 2001-01-01.
 

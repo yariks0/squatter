@@ -117,13 +117,32 @@ func (l *ipLimiter) allow(ip string) bool {
 	return limiter.Allow()
 }
 
+// clientIP is the address the limiter buckets on. Direct-exposed, that is
+// the peer. Behind a proxy the peer is the proxy, which would collapse every
+// caller into one bucket, so TRUST_PROXY switches to the *last*
+// X-Forwarded-For entry: the proxy appends the peer it actually saw, so the
+// tail is the one hop a client cannot forge by sending its own header.
+// Trusting it without a proxy in front would hand clients a free bypass —
+// hence the flag rather than sniffing for the header.
+func (a *api) clientIP(r *http.Request) string {
+	if a.deps.Cfg.TrustProxy {
+		if forwarded := r.Header.Get("X-Forwarded-For"); forwarded != "" {
+			hops := strings.Split(forwarded, ",")
+			if ip := strings.TrimSpace(hops[len(hops)-1]); ip != "" {
+				return ip
+			}
+		}
+	}
+	ip, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return ip
+}
+
 func (a *api) limitByIP(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ip, _, err := net.SplitHostPort(r.RemoteAddr)
-		if err != nil {
-			ip = r.RemoteAddr
-		}
-		if !a.ipLimiter.allow(ip) {
+		if !a.ipLimiter.allow(a.clientIP(r)) {
 			writeError(w, http.StatusTooManyRequests, "too many requests")
 			return
 		}

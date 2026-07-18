@@ -20,6 +20,11 @@ type Config struct {
 	Env             string // "dev" | "prod"
 	TokenTTL        time.Duration
 	CodeTTL         time.Duration
+	// TrustProxy makes the IP rate limiter read X-Forwarded-For instead of
+	// the peer address. Set it only when a reverse proxy owns the edge
+	// (prod, behind Caddy) — on a directly-exposed server it lets any client
+	// forge its bucket key.
+	TrustProxy bool
 }
 
 func Load() (Config, error) {
@@ -31,6 +36,7 @@ func Load() (Config, error) {
 		ResendAPIKey:    os.Getenv("RESEND_API_KEY"),
 		EmailFrom:       getenv("EMAIL_FROM", "Squatter <onboarding@resend.dev>"),
 		Env:             getenv("ENV", "dev"),
+		TrustProxy:      os.Getenv("TRUST_PROXY") == "true",
 	}
 	if cfg.DatabaseURL == "" {
 		return cfg, fmt.Errorf("DATABASE_URL is required")

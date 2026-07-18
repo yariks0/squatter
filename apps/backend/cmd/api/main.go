@@ -7,6 +7,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -27,6 +28,18 @@ import (
 
 func main() {
 	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stdout, nil)))
+
+	// The image is distroless — no shell, no curl — so the container
+	// healthcheck re-runs this binary as `/api -healthcheck`. It probes
+	// /healthz and exits 0/1. Handled before config.Load: a probe has no
+	// DATABASE_URL and must not need one.
+	if len(os.Args) > 1 && os.Args[1] == "-healthcheck" {
+		if err := healthcheck(); err != nil {
+			slog.Error("healthcheck", "err", err)
+			os.Exit(1)
+		}
+		return
+	}
 
 	cfg, err := config.Load()
 	if err != nil {
@@ -79,6 +92,23 @@ func run(cfg config.Config) error {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	return server.Shutdown(shutdownCtx)
+}
+
+func healthcheck() error {
+	port := os.Getenv("PORT")
+	if port == "" {
+		port = "8080"
+	}
+	client := &http.Client{Timeout: 3 * time.Second}
+	resp, err := client.Get("http://127.0.0.1:" + port + "/healthz")
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("status %d", resp.StatusCode)
+	}
+	return nil
 }
 
 func chooseMailer(cfg config.Config) mailer.Mailer {

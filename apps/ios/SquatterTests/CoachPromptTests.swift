@@ -23,6 +23,33 @@ struct CoachPromptTests {
         #expect(blocks.contains { $0["type"] as? String == "image" })
     }
 
+    /// nil per-rep jitter means "unmeasurable window" only in sessions that
+    /// measured jitter at all. A legacy session (persisted before the
+    /// per-rep field existed) decodes nil on every rep — none of them may be
+    /// branded unreliable.
+    @Test func legacySessionsGetNoTrackingCaveat() {
+        var analysis = SquatAnalyzer.analyze(SyntheticSquat(repCount: 2).series())
+        for index in analysis.reps.indices {
+            analysis.reps[index].trackingJitter = nil
+        }
+        let texts = CoachPrompt.userContent(analysis: analysis, keyframes: [])
+            .compactMap { $0["text"] as? String }
+        #expect(!texts.contains { $0.contains("TRACKING UNRELIABLE") })
+    }
+
+    /// In a fresh session where other reps carry measured jitter, a nil rep
+    /// really is an unmeasurable window and keeps the caveat.
+    @Test func unmeasurableRepStillGetsTrackingCaveat() {
+        var analysis = SquatAnalyzer.analyze(SyntheticSquat(repCount: 2).series())
+        analysis.reps[0].trackingJitter = nil
+        let texts = CoachPrompt.userContent(analysis: analysis, keyframes: [])
+            .compactMap { $0["text"] as? String }
+        let repLines = texts.joined(separator: "\n")
+            .split(separator: "\n").filter { $0.hasPrefix("Rep ") }
+        #expect(repLines.contains { $0.hasPrefix("Rep 1:") && $0.contains("TRACKING UNRELIABLE") })
+        #expect(repLines.contains { $0.hasPrefix("Rep 2:") && !$0.contains("TRACKING UNRELIABLE") })
+    }
+
     @Test func coachReportDecodesSchemaShapedJSON() throws {
         let sample = """
         {"summary":"Solid set.","priority_fix":{"title":"Brace harder","cue":"Big air, push out","why":"Lean grows late in the set."},"findings":[{"severity":"warning","title":"t","detail":"d","rep_numbers":[1,3],"confidence":"high"}],"positives":["Depth"]}

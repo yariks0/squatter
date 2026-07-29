@@ -481,6 +481,12 @@ enum FormRules {
     }
 
     private static func depthFindings(_ reps: [RepMetrics], reference: Double? = nil) -> [Finding] {
+        // Reps with no femur tracked at the bottom carry no honest depth
+        // call (nil) — like the other unmeasurable metrics, the rule stays
+        // silent for them rather than guessing shallow or full.
+        let judged = reps.filter { $0.hipBelowKneeDegrees != nil }
+        guard !judged.isEmpty else { return [] }
+
         // The lifter's own full-depth line: within a margin of what their
         // body reached at the scan's unloaded deep hold, capped by the
         // absolute standard — never demand more depth than their mobility
@@ -489,20 +495,28 @@ enum FormRules {
         let fullLine = min(AnalysisTuning.fullDepthDegrees, personalFull ?? .infinity)
         let mobilityLimited = fullLine < AnalysisTuning.fullDepthDegrees
 
-        let shallow = reps.filter { $0.hipBelowKneeDegrees < AnalysisTuning.parallelToleranceDegrees }
-        let atParallel = reps.filter {
-            $0.hipBelowKneeDegrees >= AnalysisTuning.parallelToleranceDegrees
-                && $0.hipBelowKneeDegrees < fullLine
+        let shallow = judged.filter { $0.hipBelowKneeDegrees! < AnalysisTuning.parallelToleranceDegrees }
+        let atParallel = judged.filter {
+            $0.hipBelowKneeDegrees! >= AnalysisTuning.parallelToleranceDegrees
+                && $0.hipBelowKneeDegrees! < fullLine
         }
         var findings: [Finding] = []
         if shallow.isEmpty, atParallel.isEmpty {
+            // "Every rep" is only claimable when every rep was measured;
+            // with unmeasured bottoms in the set, the praise names the reps
+            // it actually stands on.
+            let fullCoverage = judged.count == reps.count
             findings.append(Finding(
                 severity: .info,
                 title: "Good depth",
                 detail: mobilityLimited
-                    ? "Every rep reached your full available depth — as deep as your body scan shows you can currently sit unloaded. Mobility work (heel-elevated squats, ankle stretching) can extend that range over time."
-                    : "Full depth on every rep — hip crease clearly below the knee, the position Chinese weightlifters train for. Keep it up.",
-                repNumbers: []
+                    ? (fullCoverage
+                        ? "Every rep reached your full available depth — as deep as your body scan shows you can currently sit unloaded. Mobility work (heel-elevated squats, ankle stretching) can extend that range over time."
+                        : "Full available depth on \(repList(judged)) — as deep as your body scan shows you can currently sit unloaded. The other reps' depth couldn't be measured (hips untracked at the bottom).")
+                    : (fullCoverage
+                        ? "Full depth on every rep — hip crease clearly below the knee, the position Chinese weightlifters train for. Keep it up."
+                        : "Full depth on \(repList(judged)) — hip crease clearly below the knee, the position Chinese weightlifters train for. The other reps' depth couldn't be measured (hips untracked at the bottom)."),
+                repNumbers: fullCoverage ? [] : judged.map(\.repNumber)
             ))
         }
         if !atParallel.isEmpty {
@@ -516,7 +530,7 @@ enum FormRules {
         }
         if !shallow.isEmpty {
             findings.append(Finding(
-                severity: shallow.count > reps.count / 2 ? .warning : .info,
+                severity: shallow.count > judged.count / 2 ? .warning : .info,
                 title: "Shallow depth",
                 detail: "Hips stayed above parallel on \(repList(shallow)). Aim to sit fully down between your legs with the torso upright; if mobility is the limit, elevate your heels and go only as deep as you can with a neutral back.",
                 repNumbers: shallow.map(\.repNumber),
@@ -525,8 +539,8 @@ enum FormRules {
         }
         // Depth left on the table: the scan proves the range exists but the
         // loaded bottoms sit well above it.
-        if let reference, reps.count >= 2 {
-            let sorted = reps.map(\.hipBelowKneeDegrees).sorted()
+        if let reference, judged.count >= 2 {
+            let sorted = judged.map(\.hipBelowKneeDegrees!).sorted()
             let median = sorted[sorted.count / 2]
             if reference - median >= AnalysisTuning.depthReserveDegrees,
                median < AnalysisTuning.fullDepthDegrees {

@@ -13,7 +13,9 @@ struct RepTimelineView: View {
     @State private var scrubbing = false
 
     /// Sample x: seconds, y: 0 standing … 1 deepest point of the set.
-    private let samples: [CGPoint]
+    /// Split into segments at tracking gaps so the curve visibly breaks
+    /// instead of bridging occlusions with a confident straight line.
+    private let segments: [[CGPoint]]
     private let duration: TimeInterval
 
     private static let pointsPerSecond: CGFloat = 70
@@ -38,16 +40,30 @@ struct RepTimelineView: View {
         // the squat signal is clean enough that its minimum is the true
         // deepest point.
         let floor = switch analysis.kind {
-        case .squat: signal.min() ?? baseline
+        case .squat: signal.compactMap { $0 }.min() ?? baseline
         case .benchPress, .deadlift: RepSegmenter.touchFloor(of: signal)
         }
         let maxDepth = baseline - floor
         if baseline > 0, maxDepth > 0 {
-            samples = zip(analysis.series.frames, signal).map { frame, value in
-                CGPoint(x: frame.time, y: min(max((baseline - value) / maxDepth, 0), 1))
+            // Untracked frames (nil) break the curve into a visible gap
+            // rather than diving to a fabricated deepest point or drawing a
+            // straight chord through the occlusion.
+            var segments: [[CGPoint]] = []
+            var current: [CGPoint] = []
+            for (frame, value) in zip(analysis.series.frames, signal) {
+                if let value {
+                    current.append(CGPoint(
+                        x: frame.time, y: min(max((baseline - value) / maxDepth, 0), 1)
+                    ))
+                } else if !current.isEmpty {
+                    segments.append(current)
+                    current = []
+                }
             }
+            if !current.isEmpty { segments.append(current) }
+            self.segments = segments
         } else {
-            samples = []
+            segments = []
         }
         duration = analysis.series.frames.last?.time ?? 0
     }
@@ -97,8 +113,12 @@ struct RepTimelineView: View {
         var line: String
         switch analysis.kind {
         case .squat:
-            let depth = rep.hipBelowKneeDegrees >= AnalysisTuning.fullDepthDegrees ? "full depth"
-                : rep.hipBelowKneeDegrees >= AnalysisTuning.parallelToleranceDegrees ? "parallel" : "high"
+            let depth = switch rep.depthClass {
+            case .full: "full depth"
+            case .parallel: "parallel"
+            case .high: "high"
+            case nil: "depth n/a"
+            }
             line = String(
                 format: "%@ · lean %.0f° · %.1f s ↓ %.1f s ↑",
                 depth, rep.torsoLeanDegrees, rep.eccentricSeconds, rep.concentricSeconds
@@ -138,7 +158,7 @@ struct RepTimelineView: View {
     private func timeline(viewportWidth: CGFloat) -> some View {
         ScrollView(.horizontal, showsIndicators: false) {
             TimelineGraph(
-                samples: samples,
+                segments: segments,
                 reps: analysis.reps,
                 activity: analysis.kind,
                 pointsPerSecond: Self.pointsPerSecond
@@ -179,12 +199,15 @@ struct RepTimelineView: View {
     }
 }
 
-/// Centered running median; ends use the samples available.
-private func medianFiltered(_ values: [Double], window: Int) -> [Double] {
+/// Centered running median over the tracked samples; ends use the samples
+/// available, and a fully untracked neighborhood stays nil.
+private func medianFiltered(_ values: [Double?], window: Int) -> [Double?] {
     guard window > 1, values.count > window else { return values }
     let half = window / 2
     return values.indices.map { index in
         let neighborhood = values[max(0, index - half) ... min(values.count - 1, index + half)]
+            .compactMap { $0 }
+        guard !neighborhood.isEmpty else { return nil }
         return neighborhood.sorted()[neighborhood.count / 2]
     }
 }
@@ -193,14 +216,15 @@ private func medianFiltered(_ values: [Double], window: Int) -> [Double] {
 /// with a dashed standing line and a numbered marker at every rep's bottom.
 @available(iOS 18.0, *)
 private struct TimelineGraph: View {
-    let samples: [CGPoint]
+    let segments: [[CGPoint]]
     let reps: [RepMetrics]
     let activity: ActivityType
     let pointsPerSecond: CGFloat
 
     var body: some View {
         Canvas { context, size in
-            guard samples.count > 1 else { return }
+            let drawable = segments.filter { $0.count > 1 }
+            guard !drawable.isEmpty else { return }
             let topInset: CGFloat = 24
             let bottomInset: CGFloat = 10
             let plotHeight = size.height - topInset - bottomInset
@@ -209,15 +233,21 @@ private struct TimelineGraph: View {
                 CGPoint(x: sample.x * pointsPerSecond, y: topInset + sample.y * plotHeight)
             }
 
+            // One subpath per tracked segment: strokes and fills stop at
+            // occlusions instead of bridging them.
             var line = Path()
-            line.move(to: point(samples[0]))
-            for sample in samples.dropFirst() {
-                line.addLine(to: point(sample))
+            var area = Path()
+            for segment in drawable {
+                line.move(to: point(segment[0]))
+                area.move(to: point(segment[0]))
+                for sample in segment.dropFirst() {
+                    line.addLine(to: point(sample))
+                    area.addLine(to: point(sample))
+                }
+                area.addLine(to: CGPoint(x: point(segment[segment.count - 1]).x, y: topInset))
+                area.addLine(to: CGPoint(x: point(segment[0]).x, y: topInset))
+                area.closeSubpath()
             }
-            var area = line
-            area.addLine(to: CGPoint(x: point(samples[samples.count - 1]).x, y: topInset))
-            area.addLine(to: CGPoint(x: point(samples[0]).x, y: topInset))
-            area.closeSubpath()
 
             func drawCurve(in context: GraphicsContext) {
                 context.fill(area, with: .linearGradient(
@@ -291,12 +321,11 @@ private struct TimelineGraph: View {
     private func color(for rep: RepMetrics) -> Color {
         switch activity {
         case .squat:
-            if rep.hipBelowKneeDegrees >= AnalysisTuning.fullDepthDegrees {
-                .green
-            } else if rep.hipBelowKneeDegrees >= AnalysisTuning.parallelToleranceDegrees {
-                .orange
-            } else {
-                .red
+            switch rep.depthClass {
+            case .full: .green
+            case .parallel: .orange
+            case .high: .red
+            case nil: .gray
             }
         case .benchPress:
             // Touch depth carries the marker: elbow flexion at the bottom

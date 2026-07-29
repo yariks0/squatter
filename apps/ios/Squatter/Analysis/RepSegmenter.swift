@@ -65,35 +65,55 @@ enum RepSegmenter {
         var index = 0
         var searchStart = 0
         while index < signal.count {
-            guard signal[index] < entry else {
+            // Untracked frames (nil) carry no signal and can never open a
+            // rep — skip them instead of judging an invented value.
+            guard let value = signal[index], value < entry else {
                 index += 1
                 continue
             }
             // Walk back to the last frame where the lifter was still standing;
             // stopping at the first local bump would swallow the rest pause
-            // into the eccentric time.
+            // into the eccentric time. Interior occlusion (nil) neither
+            // proves nor ends the standing, so it is skipped; without any
+            // standing evidence the rep starts at its earliest tracked frame.
             var start = index
-            while start > searchStart, signal[start] < standing {
-                start -= 1
+            var cursor = index
+            while cursor > searchStart {
+                cursor -= 1
+                guard let current = signal[cursor] else { continue }
+                start = cursor
+                if current >= standing { break }
             }
             // Find the bottom and the exit crossing. A deadlift dwells on a
             // flat floor plateau, so its bottom is the *last* minimum (the
             // moment before the pull); the other lifts keep the first.
+            // Interior occlusion (nil) doesn't end the window — a rep whose
+            // legs vanish for a moment mid-descent is still one rep, and
+            // aborting here once dropped or split real reps. Only a tracked
+            // value back above the exit threshold closes the window.
             var bottom = index
+            var bottomValue = value
             var end = index
-            while end < signal.count - 1, signal[end] < exit {
+            while end < signal.count - 1, (signal[end] ?? -.infinity) < exit {
                 end += 1
-                if signal[end] < signal[bottom]
-                    || (activity == .deadlift && signal[end] <= signal[bottom]) {
+                if let current = signal[end],
+                   current < bottomValue
+                       || (activity == .deadlift && current <= bottomValue) {
                     bottom = end
+                    bottomValue = current
                 }
             }
+            // The rep is only real if a *tracked* value rose back through
+            // the exit; a window that ends untracked or still low is a
+            // cut-off tail (recording stopped at the bottom, or the series
+            // ends on the deadlift's final lowering), not a rep.
+            let exitedThroughTop = signal[end].map { $0 >= exit } ?? false
             // Walk forward to the first frame back at standing height.
-            while end < signal.count - 1, signal[end] < standing {
+            while end < signal.count - 1, (signal[end] ?? -.infinity) < standing {
                 end += 1
             }
 
-            let depth = baseline - signal[bottom]
+            let depth = baseline - bottomValue
             var repStart = start
             var duration = frames[end].time - frames[repStart].time
             var minimumDuration = AnalysisTuning.minimumRepDuration
@@ -110,11 +130,8 @@ enum RepSegmenter {
                     repStart += 1
                 }
             }
-            // A window whose end never rose back through the exit threshold
-            // is a cut-off tail (recording stopped at the bottom, or the
-            // series ends on the deadlift's final lowering), not a rep.
             if depth >= minimumDepth,
-               signal[end] >= exit,
+               exitedThroughTop,
                duration >= minimumDuration,
                duration <= maximumDuration {
                 // Sub-frame timing: boundary times snap to the analysis
@@ -150,14 +167,13 @@ enum RepSegmenter {
     /// back to the frame time when there is no clean crossing (a deadlift's
     /// first pull starts below every threshold).
     private static func crossingTime(
-        signal: [Double], frames: [JointFrame], from index: Int,
+        signal: [Double?], frames: [JointFrame], from index: Int,
         threshold: Double, descending: Bool
     ) -> TimeInterval {
         let neighbor = descending ? index + 1 : index - 1
         guard neighbor >= 0, neighbor < signal.count else { return frames[index].time }
-        let outside = signal[index]
-        let inside = signal[neighbor]
-        guard outside >= threshold, inside < threshold, outside - inside > 1e-9 else {
+        guard let outside = signal[index], let inside = signal[neighbor],
+              outside >= threshold, inside < threshold, outside - inside > 1e-9 else {
             return frames[index].time
         }
         let fraction = (outside - threshold) / (outside - inside)
@@ -168,12 +184,11 @@ enum RepSegmenter {
     /// The bottom instant from a parabola through the minimum and its
     /// neighbors; the frame time when the bottom is a flat plateau.
     private static func parabolicMinimumTime(
-        signal: [Double], frames: [JointFrame], at index: Int
+        signal: [Double?], frames: [JointFrame], at index: Int
     ) -> TimeInterval {
-        guard index > 0, index < signal.count - 1 else { return frames[index].time }
-        let left = signal[index - 1]
-        let center = signal[index]
-        let right = signal[index + 1]
+        guard index > 0, index < signal.count - 1,
+              let left = signal[index - 1], let center = signal[index],
+              let right = signal[index + 1] else { return frames[index].time }
         let curvature = left - 2 * center + right
         guard curvature > 1e-9 else { return frames[index].time }
         // Vertex offset in frame units, bounded to the neighboring frames.
@@ -182,16 +197,16 @@ enum RepSegmenter {
         return frames[index].time + offset * dt
     }
 
-    /// Standing height baseline: 90th percentile of the signal, robust to
-    /// both the descent phases and occasional tracking spikes.
-    static func standingBaseline(of signal: [Double]) -> Double {
-        percentile(of: signal, 0.9)
+    /// Standing height baseline: 90th percentile of the tracked samples,
+    /// robust to both the descent phases and occasional tracking spikes.
+    static func standingBaseline(of signal: [Double?]) -> Double {
+        percentile(of: signal.compactMap { $0 }, 0.9)
     }
 
     /// Touch floor for range-normalized signals (bench): 10th percentile ≈
     /// the bar at the chest, robust to compressed-skeleton noise below it.
-    static func touchFloor(of signal: [Double]) -> Double {
-        percentile(of: signal, 0.1)
+    static func touchFloor(of signal: [Double?]) -> Double {
+        percentile(of: signal.compactMap { $0 }, 0.1)
     }
 
     private static func percentile(of signal: [Double], _ fraction: Double) -> Double {
@@ -200,8 +215,9 @@ enum RepSegmenter {
         return sorted[min(signal.count - 1, Int(Double(signal.count) * fraction))]
     }
 
-    /// The contracting rep signal for an activity.
-    static func liftSignal(_ series: JointSeries, activity: ActivityType) -> [Double] {
+    /// The contracting rep signal for an activity. Untracked frames are nil
+    /// (short dropouts hold the previous value — see `heldSignal`).
+    static func liftSignal(_ series: JointSeries, activity: ActivityType) -> [Double?] {
         switch activity {
         case .squat: hipAboveAnkleSignal(series)
         case .benchPress: wristShoulderDistanceSignal(series)
@@ -211,64 +227,75 @@ enum RepSegmenter {
 
     /// Wrist-midpoint to ankle-midpoint distance per frame — bar height for
     /// a deadlift (bar on the floor ≈ shin height, lockout ≈ hip height).
-    /// Falls back to the previous value when either end is untracked.
-    static func wristAnkleDistanceSignal(_ series: JointSeries) -> [Double] {
-        var signal: [Double] = []
-        signal.reserveCapacity(series.frames.count)
-        var last = 0.0
-        for frame in series.frames {
+    /// Untracked frames are nil, except short dropouts which hold the
+    /// previous value (see `heldSignal`).
+    static func wristAnkleDistanceSignal(_ series: JointSeries) -> [Double?] {
+        heldSignal(series) { frame in
             let wrists = [frame.position(.leftWrist), frame.position(.rightWrist)]
                 .compactMap { $0 }
             let ankles = [frame.position(.leftAnkle), frame.position(.rightAnkle)]
                 .compactMap { $0 }
-            if !wrists.isEmpty, !ankles.isEmpty {
-                let wristMid = wrists.reduce(SIMD3<Float>.zero, +) / Float(wrists.count)
-                let ankleMid = ankles.reduce(SIMD3<Float>.zero, +) / Float(ankles.count)
-                last = Double(simd_length(wristMid - ankleMid))
-            }
-            signal.append(last)
+            guard !wrists.isEmpty, !ankles.isEmpty else { return nil }
+            let wristMid = wrists.reduce(SIMD3<Float>.zero, +) / Float(wrists.count)
+            let ankleMid = ankles.reduce(SIMD3<Float>.zero, +) / Float(ankles.count)
+            return Double(simd_length(wristMid - ankleMid))
         }
-        return signal
     }
 
     /// Wrist-midpoint to shoulder-midpoint distance per frame — the bar
     /// height signal for a lifter lying on a bench (lockout ≈ arm length,
-    /// bar at the chest ≈ near zero). Falls back to the previous value when
-    /// wrists are not tracked.
-    static func wristShoulderDistanceSignal(_ series: JointSeries) -> [Double] {
-        var signal: [Double] = []
-        signal.reserveCapacity(series.frames.count)
-        var last = 0.0
-        for frame in series.frames {
+    /// bar at the chest ≈ near zero). Untracked frames are nil, except short
+    /// dropouts which hold the previous value (see `heldSignal`).
+    static func wristShoulderDistanceSignal(_ series: JointSeries) -> [Double?] {
+        heldSignal(series) { frame in
             let wrists = [frame.position(.leftWrist), frame.position(.rightWrist)]
                 .compactMap { $0 }
             let shoulders = [frame.position(.leftShoulder), frame.position(.rightShoulder)]
                 .compactMap { $0 }
-            if !wrists.isEmpty, !shoulders.isEmpty {
-                let wristMid = wrists.reduce(SIMD3<Float>.zero, +) / Float(wrists.count)
-                let shoulderMid = shoulders.reduce(SIMD3<Float>.zero, +) / Float(shoulders.count)
-                last = Double(simd_length(wristMid - shoulderMid))
-            }
-            signal.append(last)
+            guard !wrists.isEmpty, !shoulders.isEmpty else { return nil }
+            let wristMid = wrists.reduce(SIMD3<Float>.zero, +) / Float(wrists.count)
+            let shoulderMid = shoulders.reduce(SIMD3<Float>.zero, +) / Float(shoulders.count)
+            return Double(simd_length(wristMid - shoulderMid))
         }
-        return signal
     }
 
-    /// Hip height above the ankle midpoint per frame; falls back to the
-    /// previous value when ankles are not tracked.
-    static func hipAboveAnkleSignal(_ series: JointSeries) -> [Double] {
-        var signal: [Double] = []
-        signal.reserveCapacity(series.frames.count)
-        var last = 0.0
-        for frame in series.frames {
+    /// Hip height above the ankle midpoint per frame. Untracked frames are
+    /// nil, except short dropouts which hold the previous value (see
+    /// `heldSignal`).
+    static func hipAboveAnkleSignal(_ series: JointSeries) -> [Double?] {
+        heldSignal(series) { frame in
             let root = frame.position(.root) ?? .zero
             let ankles = [frame.position(.leftAnkle), frame.position(.rightAnkle)]
                 .compactMap { $0 }
-            if !ankles.isEmpty {
-                let mid = ankles.reduce(SIMD3<Float>.zero, +) / Float(ankles.count)
-                last = Double(root.y - mid.y)
+            guard !ankles.isEmpty else { return nil }
+            let mid = ankles.reduce(SIMD3<Float>.zero, +) / Float(ankles.count)
+            return Double(root.y - mid.y)
+        }
+    }
+
+    /// Per-frame samples with dropout handling shared by every signal:
+    /// frames the sampler can't measure are nil — there is no honest value
+    /// for them, and inventing 0 ("deepest possible position") once minted
+    /// phantom reps out of untracked leading frames. Short interior dropouts
+    /// (≤ `repairMaxGapFrames`, the same limit `JointTrackRepair` bridges)
+    /// hold the previous value; longer gaps are real occlusion and stay
+    /// missing, as do frames before the first tracked sample.
+    private static func heldSignal(
+        _ series: JointSeries, sample: (JointFrame) -> Double?
+    ) -> [Double?] {
+        var signal: [Double?] = []
+        signal.reserveCapacity(series.frames.count)
+        var last: Double?
+        var gap = 0
+        for frame in series.frames {
+            if let value = sample(frame) {
+                last = value
+                gap = 0
+                signal.append(value)
+            } else {
+                gap += 1
+                signal.append(gap <= AnalysisTuning.repairMaxGapFrames ? last : nil)
             }
-            signal.append(last)
         }
         return signal
     }

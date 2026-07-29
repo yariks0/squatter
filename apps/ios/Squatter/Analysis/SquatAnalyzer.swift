@@ -95,8 +95,11 @@ enum SquatAnalyzer {
     private static func gatedFindings(
         for metrics: [RepMetrics], activity: ActivityType, profile: BodyGeometryProfile?
     ) -> [Finding] {
+        // nil jitter = the window had too few tracked transitions to measure
+        // (a rep full of missing bones): unmeasurable is untrusted, same as
+        // exceeding the gate — never the "no data = clean" default.
         let trusted = metrics.filter {
-            ($0.trackingJitter ?? 0) <= AnalysisTuning.repTrackingJitterGateRatio
+            ($0.trackingJitter ?? .infinity) <= AnalysisTuning.repTrackingJitterGateRatio
         }
         // Every rep untrackable = the whole-set story, told the global way.
         if trusted.isEmpty, !metrics.isEmpty {
@@ -109,7 +112,7 @@ enum SquatAnalyzer {
             depthReference: profile?.metric.deepestHipBelowKneeDegrees
         )
         let suppressed = metrics.filter {
-            ($0.trackingJitter ?? 0) > AnalysisTuning.repTrackingJitterGateRatio
+            ($0.trackingJitter ?? .infinity) > AnalysisTuning.repTrackingJitterGateRatio
         }
         if !suppressed.isEmpty {
             findings.append(FormRules.partialTrackingFinding(
@@ -138,7 +141,7 @@ enum SquatAnalyzer {
         let baseline = RepSegmenter.standingBaseline(of: signal)
         guard baseline > 0 else { return nil }
         let deep = zip(series.frames, signal)
-            .filter { $0.1 <= baseline * AnalysisTuning.geometryScanDeepFraction }
+            .filter { $0.1.map { $0 <= baseline * AnalysisTuning.geometryScanDeepFraction } ?? false }
             .map(\.0)
         return MetricBodyGeometry.measure(
             from: standingFrames(of: series, activity: .squat),
@@ -164,7 +167,7 @@ enum SquatAnalyzer {
         let baseline = RepSegmenter.standingBaseline(of: signal)
         guard baseline > 0 else { return [] }
         return zip(series.frames, signal)
-            .filter { $0.1 >= baseline * AnalysisTuning.geometryScanFraction }
+            .filter { $0.1.map { $0 >= baseline * AnalysisTuning.geometryScanFraction } ?? false }
             .map(\.0)
     }
 }

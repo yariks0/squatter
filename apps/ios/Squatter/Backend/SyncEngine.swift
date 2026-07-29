@@ -125,12 +125,12 @@ final class SyncEngine {
         let existingSummaries = (try? context.fetch(FetchDescriptor<RemoteWorkoutSummary>())) ?? []
         var summaryByID = Dictionary(uniqueKeysWithValues: existingSummaries.map { ($0.id, $0) })
 
-        for dto in response.sessions {
+        for dto in response.sessions.elements {
             if localVideoIDs.contains(dto.id) {
                 summaryByID[dto.id].map(context.delete) // superseded by a local recording
                 continue
             }
-            let repsData = (try? ApiClient.makeEncoder().encode(dto.reps)) ?? Data("[]".utf8)
+            let repsData = (try? ApiClient.makeEncoder().encode(dto.reps.elements)) ?? Data("[]".utf8)
             if let existing = summaryByID[dto.id] {
                 existing.date = dto.date
                 existing.score = dto.score
@@ -207,7 +207,7 @@ struct SessionPushPayload: Encodable {
 }
 
 private struct SessionsResponse: Decodable {
-    let sessions: [SessionDTO]
+    let sessions: LossyArray<SessionDTO>
 }
 
 private struct SessionDTO: Decodable {
@@ -218,5 +218,41 @@ private struct SessionDTO: Decodable {
     let repCount: Int
     let usedLidar: Bool
     let weightKg: Double?
-    let reps: [RepMetrics]
+    let reps: LossyArray<RepMetrics>
+}
+
+/// Decodes as many elements as possible and skips the ones that fail. The
+/// server stores sessions and reps written by *any* app version as opaque
+/// JSON, so one element this build can't decode (e.g. written by a newer
+/// build with a changed field) must degrade to a skipped element, never
+/// abort the whole pull.
+private struct LossyArray<Element: Decodable>: Decodable {
+    var elements: [Element] = []
+
+    init(from decoder: Decoder) throws {
+        var container = try decoder.unkeyedContainer()
+        while !container.isAtEnd {
+            if let element = try? container.decode(Element.self) {
+                elements.append(element)
+            } else {
+                // Consume the failed element so the container advances;
+                // JSONSkipped accepts any JSON value.
+                _ = try container.decode(JSONSkipped.self)
+            }
+        }
+    }
+}
+
+/// Matches (and discards) any JSON value, so a failed element can be
+/// skipped without knowing its shape.
+private struct JSONSkipped: Decodable {
+    init(from decoder: Decoder) throws {
+        let container = try decoder.singleValueContainer()
+        if container.decodeNil() { return }
+        if (try? container.decode(Bool.self)) != nil { return }
+        if (try? container.decode(Double.self)) != nil { return }
+        if (try? container.decode(String.self)) != nil { return }
+        if (try? container.decode([JSONSkipped].self)) != nil { return }
+        _ = try container.decode([String: JSONSkipped].self)
+    }
 }

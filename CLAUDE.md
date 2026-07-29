@@ -138,8 +138,16 @@ checks" → `xcrun simctl shutdown all` and retry.
 - `TrackingQuality.boneLengthJitter` gates form rules (> 0.01); it is
   computed **before** skeleton correction and track repair — both would
   mask the flicker it measures. Clean squats: 0.0002–0.003. The per-rep
-  timeline gate (same 0.01) suppresses single flickering reps; dropouts
-  read as *clean* jitter, so it catches flicker, not occlusion.
+  timeline gate (same 0.01) suppresses flickering reps, and a window too
+  occluded to measure has nil jitter and is suppressed too — unmeasurable
+  is untrusted, never "no data = clean". But partial dropouts (some bones
+  missing, the rest steady) still read as *clean* jitter, so per-metric nil
+  is the finer occlusion signal: lift signals are `[Double?]` (untracked
+  frames nil, dropouts ≤ `repairMaxGapFrames` hold the last value — see
+  `RepSegmenter.heldSignal`), `hipBelowKneeDegrees`/`touchPauseSeconds`
+  are nil when their frames are untracked, and nothing may judge a nil.
+  Distinguish nil-as-unmeasured from nil-as-legacy-JSON: `CoachPrompt`
+  only caveats nil-jitter reps when some rep in the session measured.
 - Analysis JSON is persisted: new fields on `SquatAnalysis`/`RepMetrics`/
   `Finding`/`JointSeries`/`JointFrame` must be optional (old sessions
   decode).

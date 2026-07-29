@@ -15,8 +15,11 @@ struct RepMetrics: Codable, Sendable, Identifiable {
     /// Knee flexion angle at the bottom, degrees (180 = straight leg).
     var kneeFlexionDegrees: Double
     /// Femur angle vs horizontal at the bottom, degrees. Positive means the
-    /// hip crease is below the knee (below parallel).
-    var hipBelowKneeDegrees: Double
+    /// hip crease is below the knee (below parallel). nil when no femur was
+    /// tracked at the bottom — an unmeasured rep is not a shallow one, so
+    /// the depth rules and overlays stay silent for it. Optional so old
+    /// JSON decodes.
+    var hipBelowKneeDegrees: Double?
     /// Trunk angle from vertical at the bottom, degrees.
     var torsoLeanDegrees: Double
     /// Peak medial knee deviation during the ascent, as a fraction of hip width.
@@ -95,6 +98,29 @@ struct RepMetrics: Codable, Sendable, Identifiable {
     var trackingJitter: Double?
 }
 
+/// Squat depth class at the rep's bottom, from the femur-angle thresholds in
+/// `AnalysisTuning`. The one place the full/parallel/high taxonomy lives —
+/// every label and color derives from it, so the tiers can't drift apart
+/// across surfaces. (`FormRules.depthFindings` personalizes only the *full*
+/// line via the body scan; the parallel line below is the same.)
+enum SquatDepthClass: Sendable {
+    case full, parallel, high
+
+    init?(hipBelowKneeDegrees: Double?) {
+        guard let degrees = hipBelowKneeDegrees else { return nil }
+        self = degrees >= AnalysisTuning.fullDepthDegrees ? .full
+            : degrees >= AnalysisTuning.parallelToleranceDegrees ? .parallel : .high
+    }
+}
+
+extension RepMetrics {
+    /// nil = no femur tracked at the bottom, so depth was never measured —
+    /// an unmeasured rep is not a shallow one, and nothing may judge it.
+    var depthClass: SquatDepthClass? {
+        SquatDepthClass(hipBelowKneeDegrees: hipBelowKneeDegrees)
+    }
+}
+
 enum MetricsCalculator {
     static func metrics(
         for reps: [Rep], in series: JointSeries, activity: ActivityType = .squat
@@ -138,7 +164,7 @@ enum MetricsCalculator {
         for rep: Rep,
         number: Int,
         in series: JointSeries,
-        signal: [Double],
+        signal: [Double?],
         lockoutHeight: Double,
         lockoutSearchEnd: Int
     ) -> RepMetrics {
@@ -156,10 +182,10 @@ enum MetricsCalculator {
             eccentricSeconds: rep.bottomTime - rep.startTime,
             concentricSeconds: rep.endTime - rep.bottomTime,
             depthFraction: lockoutHeight > 0
-                ? (lockoutHeight - signal[rep.bottomIndex]) / lockoutHeight : 0,
+                ? (lockoutHeight - (signal[rep.bottomIndex] ?? lockoutHeight)) / lockoutHeight : 0,
             kneeFlexionDegrees: kneeAngles.isEmpty
                 ? 180 : kneeAngles.reduce(0, +) / Double(kneeAngles.count),
-            hipBelowKneeDegrees: 0,
+            hipBelowKneeDegrees: nil,
             // Torso at the finish: standing tall reads near vertical, an
             // unfinished hinge stays inclined.
             torsoLeanDegrees: torsoLean(frames[rep.endIndex]) ?? 0,
@@ -260,7 +286,7 @@ enum MetricsCalculator {
         for rep: Rep,
         number: Int,
         in series: JointSeries,
-        signal: [Double],
+        signal: [Double?],
         lockoutHeight: Double,
         lockoutSearchEnd: Int
     ) -> RepMetrics {
@@ -280,11 +306,11 @@ enum MetricsCalculator {
             eccentricSeconds: rep.bottomTime - rep.startTime,
             concentricSeconds: rep.endTime - rep.bottomTime,
             depthFraction: lockoutHeight > 0
-                ? (lockoutHeight - signal[rep.bottomIndex]) / lockoutHeight : 0,
+                ? (lockoutHeight - (signal[rep.bottomIndex] ?? lockoutHeight)) / lockoutHeight : 0,
             // Neutral values for the squat-only fields; the UI and rules
             // never read them for bench reps.
             kneeFlexionDegrees: 180,
-            hipBelowKneeDegrees: 0,
+            hipBelowKneeDegrees: nil,
             torsoLeanDegrees: 0,
             kneeValgusRatio: 0,
             asymmetryDegrees: (elbowLeft != nil && elbowRight != nil)
@@ -328,18 +354,28 @@ enum MetricsCalculator {
     /// ascent are excluded: the bar is legitimately slow leaving the chest
     /// and approaching lockout.
     private static func stickingHeight(
-        rep: Rep, signal: [Double], frames: [JointFrame]
+        rep: Rep, signal: [Double?], frames: [JointFrame]
     ) -> Double? {
-        guard rep.endIndex - rep.bottomIndex >= 4 else { return nil }
-        let travel = signal[rep.endIndex] - signal[rep.bottomIndex]
+        guard rep.endIndex - rep.bottomIndex >= 4,
+              let bottomSignal = signal[rep.bottomIndex],
+              let endSignal = signal[rep.endIndex] else { return nil }
+        let travel = endSignal - bottomSignal
         guard travel > 1e-6 else { return nil }
         var slowest: (velocity: Double, height: Double)?
         for index in (rep.bottomIndex + 1) ..< rep.endIndex {
-            let height = (signal[index] - signal[rep.bottomIndex]) / travel
+            guard let value = signal[index],
+                  let previous = signal[index - 1],
+                  let next = signal[index + 1] else { continue }
+            let height = (value - bottomSignal) / travel
             guard height > 0.15, height < 0.85 else { continue }
+            // A held dropout (`heldSignal` copies the last value verbatim)
+            // reads as a bit-identical flat triple — velocity exactly 0, a
+            // fabricated pause that would always win as the sticking point.
+            // Real ascent samples are never bit-identical.
+            guard !(previous == value && next == value) else { continue }
             let dt = frames[index + 1].time - frames[index - 1].time
             guard dt > 0 else { continue }
-            let velocity = (signal[index + 1] - signal[index - 1]) / dt
+            let velocity = (next - previous) / dt
             if slowest == nil || velocity < slowest!.velocity {
                 slowest = (velocity, height)
             }
@@ -372,16 +408,38 @@ enum MetricsCalculator {
     }
 
     /// Dwell time within the bottom window — how long the bar stayed at the
-    /// chest. Near zero on a touch that bounces.
+    /// chest. Near zero on a touch that bounces; nil when occlusion cut the
+    /// window short and the true dwell is unknowable (a truncated number
+    /// would read as a bounce — the rules treat nil as not-bounced).
     private static func touchPause(
-        rep: Rep, signal: [Double], lockoutHeight: Double, frames: [JointFrame]
-    ) -> Double {
-        let ceiling = signal[rep.bottomIndex] + lockoutHeight * AnalysisTuning.bottomWindowFraction
+        rep: Rep, signal: [Double?], lockoutHeight: Double, frames: [JointFrame]
+    ) -> Double? {
+        guard let window = bottomWindow(rep: rep, signal: signal, height: lockoutHeight)
+        else { return nil }
+        return frames[window.upperBound].time - frames[window.lowerBound].time
+    }
+
+    /// Frame window around the rep's bottom where the signal stays within
+    /// `bottomWindowFraction` of the bottom sample. nil when the bottom
+    /// itself is untracked, or when an untracked frame truncates a window
+    /// edge — the walk ran into occlusion, not out of the bottom, so the
+    /// window's true extent is unknowable.
+    private static func bottomWindow(
+        rep: Rep, signal: [Double?], height: Double
+    ) -> ClosedRange<Int>? {
+        guard let bottomSignal = signal[rep.bottomIndex] else { return nil }
+        let ceiling = bottomSignal + height * AnalysisTuning.bottomWindowFraction
         var first = rep.bottomIndex
-        while first > rep.startIndex, signal[first - 1] <= ceiling { first -= 1 }
+        while first > rep.startIndex, let previous = signal[first - 1], previous <= ceiling {
+            first -= 1
+        }
         var last = rep.bottomIndex
-        while last < rep.endIndex, signal[last + 1] <= ceiling { last += 1 }
-        return frames[last].time - frames[first].time
+        while last < rep.endIndex, let next = signal[last + 1], next <= ceiling {
+            last += 1
+        }
+        if first > rep.startIndex, signal[first - 1] == nil { return nil }
+        if last < rep.endIndex, signal[last + 1] == nil { return nil }
+        return first ... last
     }
 
     /// Best average elbow extension reached between the rep's top crossing
@@ -437,7 +495,7 @@ enum MetricsCalculator {
         for rep: Rep,
         number: Int,
         in series: JointSeries,
-        signal: [Double],
+        signal: [Double?],
         standingHeight: Double,
         lockoutSearchEnd: Int
     ) -> RepMetrics {
@@ -455,7 +513,7 @@ enum MetricsCalculator {
             eccentricSeconds: rep.bottomTime - rep.startTime,
             concentricSeconds: rep.endTime - rep.bottomTime,
             depthFraction: standingHeight > 0
-                ? (standingHeight - signal[rep.bottomIndex]) / standingHeight : 0,
+                ? (standingHeight - (signal[rep.bottomIndex] ?? standingHeight)) / standingHeight : 0,
             kneeFlexionDegrees: kneeAngles.isEmpty ? 180 : kneeAngles.reduce(0, +) / Double(kneeAngles.count),
             hipBelowKneeDegrees: hipBelowKnee(bottom),
             torsoLeanDegrees: torsoLean(bottom) ?? 0,
@@ -502,23 +560,22 @@ enum MetricsCalculator {
 
     /// Horizontal pelvis drift across the bottom window, as a fraction of hip
     /// width. Model space is root-anchored, so pelvis motion over planted feet
-    /// shows up as the ankle midpoint moving under the root.
+    /// shows up as the ankle midpoint moving under the root. nil when
+    /// occlusion truncates the window (see `bottomWindow`) — a partial sweep
+    /// would under-measure the drift.
     private static func bottomHipShift(
         rep: Rep,
-        signal: [Double],
+        signal: [Double?],
         standingHeight: Double,
         frames: [JointFrame]
     ) -> Double? {
-        let ceiling = signal[rep.bottomIndex] + standingHeight * AnalysisTuning.bottomWindowFraction
-        var first = rep.bottomIndex
-        while first > rep.startIndex, signal[first - 1] <= ceiling { first -= 1 }
-        var last = rep.bottomIndex
-        while last < rep.endIndex, signal[last + 1] <= ceiling { last += 1 }
+        guard let window = bottomWindow(rep: rep, signal: signal, height: standingHeight)
+        else { return nil }
 
         var minX = Float.infinity, maxX = -Float.infinity
         var minZ = Float.infinity, maxZ = -Float.infinity
         var hipWidths: [Float] = []
-        for index in first ... last {
+        for index in window {
             let frame = frames[index]
             guard let root = frame.position(.root) else { continue }
             let ankles = [frame.position(.leftAnkle), frame.position(.rightAnkle)].compactMap { $0 }
@@ -569,8 +626,8 @@ enum MetricsCalculator {
     }
 
     /// Femur angle vs horizontal, averaged over both legs. Positive when the
-    /// hip is below the knee.
-    private static func hipBelowKnee(_ frame: JointFrame) -> Double {
+    /// hip is below the knee. nil when neither femur is tracked.
+    private static func hipBelowKnee(_ frame: JointFrame) -> Double? {
         var values: [Double] = []
         for (hip, knee) in [(BodyJoint.leftHip, BodyJoint.leftKnee), (.rightHip, .rightKnee)] {
             guard let hipPos = frame.position(hip), let kneePos = frame.position(knee) else { continue }
@@ -581,7 +638,8 @@ enum MetricsCalculator {
             // "hip below knee" is positive.
             values.append(-Double(asin(max(-1, min(1, femur.y / length)))) * 180 / .pi)
         }
-        return values.isEmpty ? -90 : values.reduce(0, +) / Double(values.count)
+        guard !values.isEmpty else { return nil }
+        return values.reduce(0, +) / Double(values.count)
     }
 
     /// Trunk (root → shoulder center) angle from vertical.

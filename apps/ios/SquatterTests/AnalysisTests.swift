@@ -40,6 +40,73 @@ struct RepSegmentationTests {
         let expectedBottom = generator.pauseSeconds + generator.eccentricSeconds
         #expect(abs(rep.bottomTime - expectedBottom) < 0.35)
     }
+
+    /// Frames before the first tracked sample (lifter walking into frame)
+    /// carry no signal: they used to emit 0.0 — "deepest possible position" —
+    /// and segment a phantom rep out of thin air.
+    @Test func leadingUntrackedFramesDoNotSegmentPhantomRep() {
+        var series = SyntheticSquat(repCount: 3).series()
+        for index in series.frames.indices where series.frames[index].time < 1.0 {
+            series.frames[index].positions = [:]
+        }
+        let signal = RepSegmenter.hipAboveAnkleSignal(series)
+        #expect(signal.prefix(15).allSatisfy { $0 == nil })
+        let reps = RepSegmenter.segment(series)
+        #expect(reps.count == 3)
+    }
+
+    /// A dropout longer than the hold limit *inside* a rep is occlusion,
+    /// not the end of the window: the rep survives with its true tempo
+    /// instead of being dropped or split into a fragment whose collapsed
+    /// eccentric would read as a free-fall descent.
+    @Test func interiorOcclusionDoesNotDropOrSplitReps() throws {
+        let generator = SyntheticSquat(repCount: 3)
+        var series = generator.series()
+        let cycle = generator.eccentricSeconds + generator.concentricSeconds
+            + generator.pauseSeconds
+        // A ~0.4 s ankle gap in the middle of rep 2's descent…
+        let rep2DescentMid = generator.pauseSeconds + cycle + generator.eccentricSeconds / 2
+        // …and another in the middle of rep 3's ascent, spanning territory
+        // the exit walk must cross.
+        let rep3AscentMid = generator.pauseSeconds + 2 * cycle
+            + generator.eccentricSeconds + generator.concentricSeconds / 2
+        for index in series.frames.indices
+        where abs(series.frames[index].time - rep2DescentMid) < 0.2
+            || abs(series.frames[index].time - rep3AscentMid) < 0.2 {
+            series.frames[index].positions.removeValue(forKey: .leftAnkle)
+            series.frames[index].positions.removeValue(forKey: .rightAnkle)
+        }
+        let reps = RepSegmenter.segment(series)
+        #expect(reps.count == 3)
+        for rep in reps {
+            #expect(abs((rep.bottomTime - rep.startTime) - generator.eccentricSeconds) < 0.4)
+        }
+    }
+
+    /// Short interior dropouts hold the last value (the same limit
+    /// `JointTrackRepair` bridges); longer ones are real occlusion and go
+    /// missing instead of freezing the signal.
+    @Test func interiorDropoutsHoldBrieflyThenGoMissing() throws {
+        var series = SyntheticSquat(repCount: 1).series()
+        // A 2-frame gap at the standing plateau: held.
+        for index in 5 ... 6 {
+            series.frames[index].positions.removeValue(forKey: .leftAnkle)
+            series.frames[index].positions.removeValue(forKey: .rightAnkle)
+        }
+        let held = RepSegmenter.hipAboveAnkleSignal(series)
+        let standing = try #require(held[4])
+        #expect(held[5] == standing && held[6] == standing)
+
+        // A 5-frame gap: beyond the bridge limit, so missing.
+        series = SyntheticSquat(repCount: 1).series()
+        for index in 5 ... 9 {
+            series.frames[index].positions.removeValue(forKey: .leftAnkle)
+            series.frames[index].positions.removeValue(forKey: .rightAnkle)
+        }
+        let missing = RepSegmenter.hipAboveAnkleSignal(series)
+        #expect(missing[5] != nil && missing[6] != nil) // within the limit, held
+        #expect(missing[7] == nil && missing[8] == nil && missing[9] == nil)
+    }
 }
 
 struct MetricsTests {
@@ -53,7 +120,7 @@ struct MetricsTests {
         let all = metrics(SyntheticSquat(repCount: 3, maxFemurAngle: 100))
         #expect(all.count == 3)
         for rep in all {
-            #expect(rep.hipBelowKneeDegrees > AnalysisTuning.parallelToleranceDegrees)
+            #expect(try #require(rep.hipBelowKneeDegrees) > AnalysisTuning.parallelToleranceDegrees)
         }
     }
 
@@ -62,8 +129,64 @@ struct MetricsTests {
         #expect(all.count == 3)
         for rep in all {
             // 55° femur angle leaves the hip well above the knee.
-            #expect(rep.hipBelowKneeDegrees < AnalysisTuning.parallelToleranceDegrees)
+            #expect(try #require(rep.hipBelowKneeDegrees) < AnalysisTuning.parallelToleranceDegrees)
         }
+    }
+
+    /// No femur tracked at the bottom = no depth measurement at all (nil),
+    /// and the depth rules stay silent instead of calling the rep shallow.
+    @Test func missingFemursYieldNoDepthJudgment() throws {
+        let generator = SyntheticSquat(repCount: 2)
+        var series = generator.series()
+        // Knock out the hip joints around each rep's bottom, like a lifter
+        // whose legs leave the frame at depth.
+        for rep in 0 ..< generator.repCount {
+            let bottom = generator.pauseSeconds
+                + Double(rep) * (generator.eccentricSeconds + generator.concentricSeconds
+                    + generator.pauseSeconds)
+                + generator.eccentricSeconds
+            for index in series.frames.indices
+            where abs(series.frames[index].time - bottom) < 0.2 {
+                series.frames[index].positions.removeValue(forKey: .leftHip)
+                series.frames[index].positions.removeValue(forKey: .rightHip)
+            }
+        }
+        let reps = RepSegmenter.segment(series)
+        let all = MetricsCalculator.metrics(for: reps, in: series)
+        #expect(all.count == 2)
+        for rep in all {
+            #expect(rep.hipBelowKneeDegrees == nil)
+        }
+        let findings = FormRules.findings(for: all)
+        #expect(!findings.contains {
+            ["Good depth", "Close to full depth", "Shallow depth", "Depth in reserve"]
+                .contains($0.title)
+        })
+    }
+
+    /// With some bottoms unmeasured, depth praise speaks only for the reps
+    /// it measured instead of claiming "every rep" from a subset.
+    @Test func depthPraiseScopedToMeasuredReps() throws {
+        let generator = SyntheticSquat(repCount: 2, maxFemurAngle: 105)
+        var series = generator.series()
+        // Knock out rep 2's hips at the bottom: rep 1 full depth, rep 2
+        // unmeasured.
+        let bottom = generator.pauseSeconds
+            + (generator.eccentricSeconds + generator.concentricSeconds
+                + generator.pauseSeconds)
+            + generator.eccentricSeconds
+        for index in series.frames.indices
+        where abs(series.frames[index].time - bottom) < 0.2 {
+            series.frames[index].positions.removeValue(forKey: .leftHip)
+            series.frames[index].positions.removeValue(forKey: .rightHip)
+        }
+        let reps = MetricsCalculator.metrics(for: RepSegmenter.segment(series), in: series)
+        #expect(reps.count == 2)
+        #expect(reps[0].hipBelowKneeDegrees != nil)
+        #expect(reps[1].hipBelowKneeDegrees == nil)
+        let good = try #require(FormRules.findings(for: reps).first { $0.title == "Good depth" })
+        #expect(good.repNumbers == [1])
+        #expect(!good.detail.contains("every rep"))
     }
 
     @Test func valgusDetectedWhenInjected() throws {
@@ -353,6 +476,34 @@ struct TrackingGateTests {
         })
     }
 
+    /// A rep window with too few tracked bones to measure jitter (nil, not a
+    /// small number) must not pass the per-rep gate as "clean" — unmeasurable
+    /// is untrusted, so the rep is suppressed like one over the gate.
+    @Test func unmeasurableRepJitterIsNotTrusted() throws {
+        // Rep cycle = 1.2 + 1.0 + 4 s; rep 2 runs roughly 10.2–12.4 s. Strip
+        // everything but the shins there: fewer than the timeline's minimum
+        // 3 bones stay tracked, so the window's jitter is unmeasurable while
+        // the hip-above-ankle signal (root + ankles) still segments the rep.
+        var series = SyntheticSquat(repCount: 2, pauseSeconds: 4).series()
+        for index in series.frames.indices
+        where (10.0 ... 12.6).contains(series.frames[index].time) {
+            series.frames[index].positions = series.frames[index].positions.filter {
+                [.root, .leftKnee, .leftAnkle, .rightKnee, .rightAnkle].contains($0.key)
+            }
+        }
+        let analysis = SquatAnalyzer.analyze(series)
+        #expect(analysis.reps.count == 2)
+        let rep2 = try #require(analysis.reps.first { $0.repNumber == 2 })
+        #expect(rep2.trackingJitter == nil)
+        let partial = try #require(analysis.findings.first {
+            $0.title.contains("couldn't be tracked")
+        })
+        #expect(partial.repNumbers == [2])
+        #expect(analysis.findings.allSatisfy {
+            !$0.repNumbers.contains(2) || $0.title.contains("couldn't be tracked")
+        })
+    }
+
     @Test func allRepsUntrackableFallsBackToGlobalFinding() {
         // Long clean pauses keep the whole-series median under the global
         // gate while both rep windows flicker (rep cycle = 1.2 + 1.0 + 4 s).
@@ -423,6 +574,24 @@ struct FormFaultTests {
         let faults = repFaults(generator, at: bottom)
         #expect(faults.leftLeg && faults.rightLeg)
         #expect(!faults.torso)
+    }
+
+    /// No femur tracked at the bottom = no depth call: the legs stay green
+    /// instead of lighting up on a fabricated "shallow" value.
+    @Test func unmeasuredDepthKeepsLegsGreen() {
+        let generator = SyntheticSquat(repCount: 1, maxFemurAngle: 55)
+        var series = generator.series()
+        let bottom = generator.pauseSeconds + generator.eccentricSeconds
+        for index in series.frames.indices
+        where abs(series.frames[index].time - bottom) < 0.2 {
+            series.frames[index].positions.removeValue(forKey: .leftHip)
+            series.frames[index].positions.removeValue(forKey: .rightHip)
+        }
+        let reps = MetricsCalculator.metrics(for: RepSegmenter.segment(series), in: series)
+        #expect(reps.first?.hipBelowKneeDegrees == nil)
+        let frame = series.frames.min { abs($0.time - bottom) < abs($1.time - bottom) }!
+        let faults = FormFaultDetector.faults(in: frame, at: frame.time, reps: reps)
+        #expect(faults == .none)
     }
 
     @Test func deepRepBottomKeepsLegsGreen() {

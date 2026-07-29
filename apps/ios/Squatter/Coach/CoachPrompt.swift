@@ -289,9 +289,16 @@ enum CoachPrompt {
     /// Marker appended to a rep line whose tracking window flickered: its
     /// numbers are embedded (the coach sees the whole set) but must not be
     /// treated as form evidence.
-    private static func trackingCaveat(_ rep: RepMetrics) -> String {
-        guard let jitter = rep.trackingJitter,
-              jitter > AnalysisTuning.repTrackingJitterGateRatio else { return "" }
+    ///
+    /// `jitterMeasured` disambiguates the two meanings of a nil jitter: in a
+    /// session where any rep carries a measured value, nil means an
+    /// unmeasurable window (untrusted, same as exceeding the gate); in a
+    /// session persisted before the per-rep metric existed, every rep is nil
+    /// and none of them deserves the caveat.
+    private static func trackingCaveat(_ rep: RepMetrics, jitterMeasured: Bool) -> String {
+        let unreliable = rep.trackingJitter
+            .map { $0 > AnalysisTuning.repTrackingJitterGateRatio } ?? jitterMeasured
+        guard unreliable else { return "" }
         return " — TRACKING UNRELIABLE: this rep's angles are noise; do not judge form from its numbers or keyframe"
     }
 
@@ -305,13 +312,18 @@ enum CoachPrompt {
             lines.append(String(format: "Estimated body height: %.2f m.", height))
         }
         lines.append("")
+        let jitterMeasured = analysis.reps.contains { $0.trackingJitter != nil }
         switch analysis.kind {
         case .squat:
             lines.append("Per-rep metrics (femur angle positive = hip below knee):")
             for rep in analysis.reps {
+                // nil femur angle = no femur tracked at the bottom; omit it
+                // rather than feeding the coach an invented number.
+                let femur = rep.hipBelowKneeDegrees
+                    .map { String(format: "femur %+.0f°, ", $0) } ?? ""
                 var line = String(
-                    format: "Rep %d: femur %+.0f°, torso lean %.0f°, valgus %.2f×hip width, down %.1f s, up %.1f s, L/R knee diff %.0f°",
-                    rep.repNumber, rep.hipBelowKneeDegrees, rep.torsoLeanDegrees,
+                    format: "Rep %d: %@torso lean %.0f°, valgus %.2f×hip width, down %.1f s, up %.1f s, L/R knee diff %.0f°",
+                    rep.repNumber, femur, rep.torsoLeanDegrees,
                     rep.kneeValgusRatio, rep.eccentricSeconds, rep.concentricSeconds,
                     rep.asymmetryDegrees
                 )
@@ -336,17 +348,21 @@ enum CoachPrompt {
                 if let velocity = rep.meanConcentricVelocity {
                     line += String(format: ", MCV %.2f m/s", velocity)
                 }
-                line += trackingCaveat(rep)
+                line += trackingCaveat(rep, jitterMeasured: jitterMeasured)
                 lines.append(line)
             }
         case .benchPress:
             lines.append("Per-rep metrics (elbow 180° = straight; flare 0° = arm at the side; drift positive = head-ward):")
             for rep in analysis.reps {
+                // nil touch pause = occlusion cut the dwell window short;
+                // omit it rather than reporting a fabricated bounce.
+                let pause = rep.touchPauseSeconds
+                    .map { String(format: "touch pause %.2f s, ", $0) } ?? ""
                 var line = String(
-                    format: "Rep %d: touch elbow %.0f°, flare %.0f°, down %.1f s, up %.1f s, touch pause %.2f s, L/R elbow diff %.0f°",
+                    format: "Rep %d: touch elbow %.0f°, flare %.0f°, down %.1f s, up %.1f s, %@L/R elbow diff %.0f°",
                     rep.repNumber, rep.elbowFlexionDegrees ?? 180,
                     rep.elbowFlareDegrees ?? 0, rep.eccentricSeconds,
-                    rep.concentricSeconds, rep.touchPauseSeconds ?? 0,
+                    rep.concentricSeconds, pause,
                     rep.asymmetryDegrees
                 )
                 if let lockout = rep.lockoutElbowDegrees {
@@ -367,17 +383,21 @@ enum CoachPrompt {
                 if let velocity = rep.meanConcentricVelocity {
                     line += String(format: ", MCV %.2f m/s", velocity)
                 }
-                line += trackingCaveat(rep)
+                line += trackingCaveat(rep, jitterMeasured: jitterMeasured)
                 lines.append(line)
             }
         case .deadlift:
             lines.append("Per-rep metrics (spine 180° = straight line, smaller = rounding; bar gap and drift in hip widths):")
             for rep in analysis.reps {
+                // nil dwell = occlusion cut the window short; omit it rather
+                // than reporting a fabricated bounce off the floor.
+                let dwell = rep.touchPauseSeconds
+                    .map { String(format: "floor dwell %.2f s, ", $0) } ?? ""
                 var line = String(
-                    format: "Rep %d: worst spine %.0f°, down %.1f s, up %.1f s, floor dwell %.2f s, L/R knee diff %.0f°",
+                    format: "Rep %d: worst spine %.0f°, down %.1f s, up %.1f s, %@L/R knee diff %.0f°",
                     rep.repNumber, rep.spineFlexionDegrees ?? 180,
                     rep.eccentricSeconds, rep.concentricSeconds,
-                    rep.touchPauseSeconds ?? 0, rep.asymmetryDegrees
+                    dwell, rep.asymmetryDegrees
                 )
                 if let gap = rep.barGapRatio {
                     line += String(format: ", bar gap %.2f×hip width", gap)
@@ -395,7 +415,7 @@ enum CoachPrompt {
                 if let velocity = rep.meanConcentricVelocity {
                     line += String(format: ", MCV %.2f m/s", velocity)
                 }
-                line += trackingCaveat(rep)
+                line += trackingCaveat(rep, jitterMeasured: jitterMeasured)
                 lines.append(line)
             }
         }

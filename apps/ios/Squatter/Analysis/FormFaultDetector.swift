@@ -30,8 +30,11 @@ enum FormFaultDetector {
               let rep = reps.first(where: { time >= $0.startTime && time <= $0.endTime })
         else { return faults }
         let bottomTime = rep.startTime + rep.eccentricSeconds
-        let shallow = rep.hipBelowKneeDegrees < AnalysisTuning.parallelToleranceDegrees
-        if shallow, abs(time - bottomTime) <= shallowBottomWindow {
+        // No femur tracked at the bottom = no honest depth call; don't
+        // paint the legs on a guess.
+        if let depth = rep.hipBelowKneeDegrees,
+           depth < AnalysisTuning.parallelToleranceDegrees,
+           abs(time - bottomTime) <= shallowBottomWindow {
             faults.leftLeg = true
             faults.rightLeg = true
         }

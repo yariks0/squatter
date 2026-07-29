@@ -81,14 +81,15 @@ import simd
         let uncorrected = SquatAnalyzer.analyze(blind.series())
         // Without image data the biased pose is self-consistent and reads
         // shallow — no model-space constraint can see the error.
-        #expect(uncorrected.reps[0].hipBelowKneeDegrees
-            < truth.reps[0].hipBelowKneeDegrees - 15)
+        #expect(try #require(uncorrected.reps[0].hipBelowKneeDegrees)
+            < #require(truth.reps[0].hipBelowKneeDegrees) - 15)
 
         let corrected = SquatAnalyzer.analyze(squat.series())
         #expect(corrected.metricGeometry != nil)
         #expect(corrected.reps.count == truth.reps.count)
         for (fixed, real) in zip(corrected.reps, truth.reps) {
-            #expect(abs(fixed.hipBelowKneeDegrees - real.hipBelowKneeDegrees) < 4)
+            #expect(abs(try #require(fixed.hipBelowKneeDegrees)
+                - #require(real.hipBelowKneeDegrees)) < 4)
             #expect(abs(fixed.kneeFlexionDegrees - real.kneeFlexionDegrees) < 5)
         }
         #expect(corrected.findings.contains { $0.title == "Good depth" })
@@ -98,7 +99,7 @@ import simd
     /// than the model. The 3D pose never exaggerates depth, so the anchor
     /// must never shallow it — a real pulled session lost 30° on good reps
     /// before this gate existed.
-    @Test func imageAnchorNeverShallowsThePose() {
+    @Test func imageAnchorNeverShallowsThePose() throws {
         var squat = SyntheticSquat(maxFemurAngle: 95)
         // Model 15° deeper than what the image claims.
         squat.modelPoseShallowBias = -15
@@ -107,7 +108,8 @@ import simd
         let withImage = SquatAnalyzer.analyze(squat.series())
         #expect(withImage.reps.count == modelOnly.reps.count)
         for (image, model) in zip(withImage.reps, modelOnly.reps) {
-            #expect(abs(image.hipBelowKneeDegrees - model.hipBelowKneeDegrees) < 1.5)
+            #expect(abs(try #require(image.hipBelowKneeDegrees)
+                - #require(model.hipBelowKneeDegrees)) < 1.5)
         }
     }
 
@@ -120,7 +122,7 @@ import simd
         #expect(analysis.findings.contains { $0.title == "Shallow depth" })
     }
 
-    @Test func analysisIsUnchangedWithoutImageData() {
+    @Test func analysisIsUnchangedWithoutImageData() throws {
         let squat = SyntheticSquat()
         let raw = squat.series()
         let smoothed = JointSeriesSmoother.smoothed(raw, window: AnalysisTuning.smoothingWindow)
@@ -129,7 +131,8 @@ import simd
         let analyzed = SquatAnalyzer.analyze(raw)
         #expect(analyzed.reps.count == baseline.count)
         #expect(abs(analyzed.reps[0].kneeFlexionDegrees - baseline[0].kneeFlexionDegrees) < 0.01)
-        #expect(abs(analyzed.reps[0].hipBelowKneeDegrees - baseline[0].hipBelowKneeDegrees) < 0.01)
+        #expect(abs(try #require(analyzed.reps[0].hipBelowKneeDegrees)
+            - #require(baseline[0].hipBelowKneeDegrees)) < 0.01)
     }
 
     @Test func preScanProfileOverridesSessionScan() throws {

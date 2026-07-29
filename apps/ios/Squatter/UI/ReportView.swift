@@ -127,12 +127,16 @@ private struct RepCard: View {
 
     @ViewBuilder
     private var squatLines: some View {
-        metricLine(
-            "Depth",
-            rep.hipBelowKneeDegrees >= AnalysisTuning.fullDepthDegrees ? "full" :
-                rep.hipBelowKneeDegrees >= AnalysisTuning.parallelToleranceDegrees ? "parallel" : "high",
-            good: rep.hipBelowKneeDegrees >= AnalysisTuning.parallelToleranceDegrees
-        )
+        let depth = rep.depthClass
+        let label = switch depth {
+        case .full: "full"
+        case .parallel: "parallel"
+        case .high: "high"
+        case nil: "n/a"
+        }
+        // Unmeasured depth is neither good nor bad — neutral, matching the
+        // timeline's gray marker.
+        metricLine("Depth", label, good: depth.map { $0 != .high })
         metricLine(
             "Lean",
             "\(Int(rep.torsoLeanDegrees))°",
@@ -203,10 +207,12 @@ private struct RepCard: View {
         return line
     }
 
-    private func metricLine(_ label: String, _ value: String, good: Bool) -> some View {
+    /// nil `good` = the metric couldn't be measured: a neutral gray dot, so
+    /// "no data" never wears the passing color.
+    private func metricLine(_ label: String, _ value: String, good: Bool?) -> some View {
         HStack(spacing: 4) {
             Circle()
-                .fill(good ? .green : .orange)
+                .fill(good.map { $0 ? Color.green : .orange } ?? .gray)
                 .frame(width: 6, height: 6)
             Text("\(label): \(value)")
                 .font(.caption)

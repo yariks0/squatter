@@ -25,6 +25,13 @@ UI (HomeView routes)
  │                                                     ├─ PlateDetector.detect (async, review-time)
  │                                                     └─ PlatePickerView ↔ PlateCatalog(Store)
  ├─ AttemptReviewView ──(RecordingResult, ActivityType)──▶ AnalysisView (AnalysisFlow.swift)
+ │        Analyzing a trimmed selection first cuts the file itself:
+ │        RecordingTrimmer remuxes just the range (passthrough, no
+ │        re-encode), rebases sidecar timestamps by the *measured* actual
+ │        start (passthrough cuts at the sync frame ≤ the requested start),
+ │        and replaces the originals in place (same URL + creation date);
+ │        the uncut recording is deleted. Failure falls back to passing
+ │        analysisRange over the untouched file.
  │        AnalysisViewModel.run:
  │          PoseExtractor.extract(video, depthSidecar) ──▶ JointSeries
  │          SquatAnalyzer.analyze(series, activity, profile: BodyGeometryProfileStore.load())

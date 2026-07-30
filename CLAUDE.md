@@ -44,7 +44,9 @@ checks" → `xcrun simctl shutdown all` and retry.
 ## Architecture (one line each; full map in docs/architecture.md)
 
 - `apps/ios/Squatter/Capture/` — `CameraService` (video + LiDAR `DepthSidecar`),
-  `FramingChecker`, live rep counter/voice coach hooks.
+  `FramingChecker`, live rep counter/voice coach hooks, `RecordingTrimmer`
+  (review-time trim cuts the file in place — passthrough remux + sidecar
+  rebase, uncut original deleted).
 - `apps/ios/Squatter/Analysis/` — pure, UI-free, compiles standalone on macOS:
   `PoseExtractor` → `JointTrackRepair` (despike + ≤2-frame gap bridge on
   the raw series, *after* `TrackingQuality` measures it; touched joints

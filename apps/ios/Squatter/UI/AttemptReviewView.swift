@@ -3,8 +3,8 @@ import SwiftUI
 
 /// Playback + trim for a recording before analysis: fresh sets land here
 /// right after recording, and older unanalyzed attempts reopen here. Dragging
-/// the trim handles cuts setup/walk-away time so analysis runs on just the
-/// actual reps.
+/// the trim handles cuts setup/walk-away time; analyzing a trimmed selection
+/// cuts the file itself — only the selection is kept on disk.
 struct AttemptReviewView: View {
     let videoURL: URL
     let depthSidecarURL: URL?
@@ -23,6 +23,8 @@ struct AttemptReviewView: View {
     @State private var lastPrefilledText = ""
     /// Trim start of the last empty-handed rescan, to skip redundant passes.
     @State private var rescannedFrom: TimeInterval = -1
+    /// True while the selection is being cut out of the file on disk.
+    @State private var trimming = false
 
     /// Shortest analyzable window — roughly one slow rep.
     private static let minimumWindow: TimeInterval = 2
@@ -77,22 +79,15 @@ struct AttemptReviewView: View {
                 scanStatus: plateScan
             )
 
-            Button {
-                if let weight = enteredWeightKg {
-                    UserDefaults.standard.set(weight, forKey: Self.lastWeightKey(for: activity))
+            Button(action: analyze) {
+                if trimming {
+                    Label("Trimming recording…", systemImage: "scissors")
+                } else {
+                    Label(analyzeTitle, systemImage: "waveform.path.ecg")
                 }
-                onAnalyze(RecordingResult(
-                    videoURL: videoURL,
-                    depthSidecarURL: depthSidecarURL,
-                    duration: duration,
-                    usedLiDAR: depthSidecarURL != nil,
-                    analysisRange: selectedRange,
-                    weightKg: enteredWeightKg
-                ), activity)
-            } label: {
-                Label(analyzeTitle, systemImage: "waveform.path.ecg")
             }
             .buttonStyle(KodoProminentButtonStyle(fullWidth: true))
+            .disabled(trimming)
         }
         .padding()
         .navigationTitle("Recorded set")
@@ -118,6 +113,52 @@ struct AttemptReviewView: View {
         }
         .onChange(of: activity) { prefillWeight() }
         .onDisappear { player.pause() }
+    }
+
+    /// Hands the recording to analysis. A trimmed selection is first cut out
+    /// of the file on disk (`RecordingTrimmer`) — the uncut original is
+    /// deleted and the review state rebases to the trimmed timeline, so
+    /// coming back to this screen shows the file that actually exists. If
+    /// the cut fails the original stays untouched and analysis falls back to
+    /// reading just the selected window.
+    private func analyze() {
+        if let weight = enteredWeightKg {
+            UserDefaults.standard.set(weight, forKey: Self.lastWeightKey(for: activity))
+        }
+        let recording = RecordingResult(
+            videoURL: videoURL,
+            depthSidecarURL: depthSidecarURL,
+            duration: duration,
+            usedLiDAR: depthSidecarURL != nil,
+            analysisRange: selectedRange,
+            weightKg: enteredWeightKg
+        )
+        guard let range = selectedRange else {
+            onAnalyze(recording, activity)
+            return
+        }
+        trimming = true
+        player.pause()
+        Task {
+            defer { trimming = false }
+            if let trimmed = try? await RecordingTrimmer.trim(recording, to: range) {
+                rebase(to: trimmed)
+                onAnalyze(trimmed, activity)
+            } else {
+                onAnalyze(recording, activity)
+            }
+        }
+    }
+
+    /// Points the review state at the trimmed file: full-range handles, new
+    /// duration, and a fresh player item (the old one still reads the
+    /// deleted original through its open file handle).
+    private func rebase(to trimmed: RecordingResult) {
+        duration = trimmed.duration
+        trimStart = 0
+        trimEnd = trimmed.duration
+        rescannedFrom = -1
+        player.replaceCurrentItem(with: AVPlayerItem(asset: AVURLAsset(url: trimmed.videoURL)))
     }
 
     /// Load on the bar: optional, but it feeds the load–velocity profile

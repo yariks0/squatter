@@ -26,7 +26,8 @@ enum PoseExtractor {
         videoURL: URL,
         depthSidecarURL: URL?,
         timeRange: ClosedRange<TimeInterval>? = nil,
-        progress: (@Sendable (Double) -> Void)? = nil
+        progress: (@Sendable (Double) -> Void)? = nil,
+        readerStallRecovery: (@Sendable () async -> Void)? = nil
     ) async throws -> JointSeries {
         let asset = AVURLAsset(url: videoURL)
         guard let track = try await asset.loadTracks(withMediaType: .video).first else {
@@ -192,7 +193,17 @@ enum PoseExtractor {
             guard resumesWithoutProgress <= Self.maxReaderResumes else {
                 throw reader.error ?? PoseExtractionError.readerFailed
             }
-            try await Task.sleep(for: .milliseconds(600))
+            // The default wait is a quick retry; callers with app-lifecycle
+            // knowledge (this layer stays UIKit-free) inject a smarter wait
+            // that parks while the app is backgrounded — a dead decoder
+            // cannot come back before foreground, and fast retries would
+            // burn every resume attempt against a wall.
+            if let readerStallRecovery {
+                await readerStallRecovery()
+                try Task.checkCancellation()
+            } else {
+                try await Task.sleep(for: .milliseconds(600))
+            }
             reader.cancelReading()
             // A failed re-creation (still backgrounded) burns an attempt and
             // loops; the cancelled reader yields no samples and lands back here.

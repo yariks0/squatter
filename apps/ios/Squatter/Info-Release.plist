@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Release base Info.plist: Xcode merges the generated INFOPLIST_KEY_*
+     values on top (same pattern as Info-Debug.plist, minus the Debug-only
+     ATS exception). Exists solely for keys that have no INFOPLIST_KEY_*
+     build setting. -->
+<plist version="1.0">
+<dict>
+    <!-- BackgroundAnalysisActivity's continued-processing tasks (iOS 26+):
+         wildcard per Apple's contract — each analysis run submits a unique
+         suffix under this prefix. Keep in sync with Info-Debug.plist. -->
+    <key>BGTaskSchedulerPermittedIdentifiers</key>
+    <array>
+        <string>com.yarik.squatter.analysis.*</string>
+    </array>
+</dict>
+</plist>

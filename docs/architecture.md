@@ -32,7 +32,13 @@ UI (HomeView routes)
  │        and replaces the originals in place (same URL + creation date);
  │        the uncut recording is deleted. Failure falls back to passing
  │        analysisRange over the untouched file.
- │        AnalysisViewModel.run:
+ │        AnalysisViewModel.run (wrapped in BackgroundAnalysisActivity —
+ │        App/ — so leaving the app doesn't stall it: beginBackgroundTask
+ │        always, plus an iOS 26 BGContinuedProcessingTask with system
+ │        progress UI fed from extraction progress; wildcard identifier
+ │        com.yarik.squatter.analysis.* in both Info plists. PoseExtractor
+ │        gets a readerStallRecovery hook that parks until foreground when
+ │        the decoder dies in the background — Analysis stays UIKit-free):
  │          PoseExtractor.extract(video, depthSidecar) ──▶ JointSeries
  │          SquatAnalyzer.analyze(series, activity, profile: BodyGeometryProfileStore.load())
  │          └─▶ SquatAnalysis ──▶ ReportView / saved as WorkoutSession (SwiftData)
@@ -74,7 +80,7 @@ Type→file exceptions (everything else lives in `<TypeName>.swift`):
 
 | Stage | Key facts |
 |---|---|
-| `PoseExtractor` | Video+sidecar → `JointSeries`. 15 fps 3D pose + 2D image points; 30 fps `barTrack` (wrist-mid y). Sets per-frame `metersPerImageHeight` (LiDAR body plane × H / focal, pitch-corrected) and series-level `imageAspectRatio` (W/H), `bodyHeight` (measured, not the Vision prior). Resumes if the decoder dies mid-file (backgrounding). |
+| `PoseExtractor` | Video+sidecar → `JointSeries`. 15 fps 3D pose + 2D image points; 30 fps `barTrack` (wrist-mid y). Sets per-frame `metersPerImageHeight` (LiDAR body plane × H / focal, pitch-corrected) and series-level `imageAspectRatio` (W/H), `bodyHeight` (measured, not the Vision prior). Resumes if the decoder dies mid-file (backgrounding); the injected `readerStallRecovery` (UI layer) waits for foreground before retrying, so backgrounded stalls don't exhaust the resume attempts. |
 | `JointTrackRepair` | Pre-smoothing fork: detrended Hampel despike (median-slope detrend, else mid-rep motion inflates the MAD and spikes slip under) + linear bridging of ≤ 2-frame joint dropouts, `positions` and `imagePoints` independently. Every touched joint flagged in `JointFrame.repairedJoints`. **Runs after TrackingQuality is measured** — cleaning first would mask the flicker the gate catches. Repaired joints may never assert a fault: `MetricsCalculator`'s valgus/spine sweeps skip repaired frames (a real session's degenerate stretch passed the valgus sanity guards after despiking and minted a fake 0.5 risk reading), and the overlay dims them instead of drawing red. |
 | `JointSeriesSmoother` | Quadratic Savitzky–Golay, window 5 (image points window 3). Preserves curvature — bottoms keep true depth. |
 | `TrackingQuality` | Median frame-to-frame relative bone-length change. Clean squats 0.0002–0.003; gate at 0.01 replaces all findings with one "tracking unstable". **Computed before SkeletonCorrector and JointTrackRepair** — both would mask flicker. `frameJitterTimeline` + `repJitter` localize it: per-rep medians gate single reps (`repTrackingJitterGateRatio`, also 0.01) when the global gate passes — suppressed reps keep metrics/velocity but are excluded from FormRules, named in one info finding, and caveated in the coach prompt. Replay: clean-session rep windows measure 0.0003–0.0054, the broken 2026-07-08 bench windows 0.017–0.086 — 0.01 sits in the gap. Partial dropouts read as *clean* jitter (missing bones don't register), so the measured gate catches flicker; a window with too few tracked transitions has **nil** `repJitter` and is suppressed as unmeasurable (`?? .infinity` at the gates — never "no data = clean"). Finer occlusion (bones missing only at the bottom) is carried by per-metric nils instead: `hipBelowKneeDegrees`, `touchPauseSeconds`/`bottomHipShiftRatio` (nil when occlusion truncates the bottom window), and `stickingHeight` skips held flat triples. `CoachPrompt` caveats nil-jitter reps only when some rep in the session has a measured value — in legacy pre-jitter sessions every rep decodes nil and none is branded unreliable. |

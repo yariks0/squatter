@@ -17,5 +17,12 @@
          connection fails with a misleading "offline" error. Debug-only. -->
     <key>NSLocalNetworkUsageDescription</key>
     <string>Squatter connects to your development backend on the local network.</string>
+    <!-- BackgroundAnalysisActivity's continued-processing tasks (iOS 26+):
+         wildcard per Apple's contract — each analysis run submits a unique
+         suffix under this prefix. Keep in sync with Info-Release.plist. -->
+    <key>BGTaskSchedulerPermittedIdentifiers</key>
+    <array>
+        <string>com.yarik.squatter.analysis.*</string>
+    </array>
 </dict>
 </plist>

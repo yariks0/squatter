@@ -87,4 +87,24 @@ import Testing
         // Mid-grey gym wall: no plate code.
         #expect(PlateColor.classify(red: 0.5, green: 0.5, blue: 0.5) == nil)
     }
+
+    /// Weight-field policy: tapped plates total up; a sighted bar with no
+    /// tapped plates still weighs the bar; no sighting and no taps = empty.
+    /// MainActor because the policy lives on the (MainActor) picker view.
+    @Test @MainActor func weightFieldTotalPolicy() {
+        var catalog = PlateCatalog()
+        catalog.barWeightKg = 20
+        catalog.plates = PlateCatalog.standardIWFPlates
+        let twenty = catalog.plates.first { $0.weightKg == 20 }!
+
+        #expect(PlatePickerView.totalText(
+            counts: [twenty: 2], plateSighted: true, catalog: catalog
+        ) == "100")
+        #expect(PlatePickerView.totalText(
+            counts: [:], plateSighted: true, catalog: catalog
+        ) == "20")
+        #expect(PlatePickerView.totalText(
+            counts: [twenty: 0], plateSighted: false, catalog: catalog
+        ) == "")
+    }
 }

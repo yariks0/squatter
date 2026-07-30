@@ -8,12 +8,12 @@ import SwiftUI
 struct PlatePickerView: View {
     @Binding var weightText: String
     let detected: [PlateDetector.Sighting]
+    var scanStatus: PlateScanStatus = .found
 
     @State private var catalog = PlateCatalogStore.load() ?? PlateCatalog()
     @State private var counts: [PlateSpec: Int] = [:]
     @State private var teachDiameter: TeachTarget?
     @State private var teachWeightText = ""
-    @State private var appliedDetection = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -31,11 +31,33 @@ struct PlatePickerView: View {
                 .font(.caption)
             }
             if catalog.plates.isEmpty {
-                Text("Add your gym's plates once — weight and diameter — and future sets total up with a couple of taps. Black no-color plates are fine: diameter is what's matched.")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
+                if detected.isEmpty {
+                    Text("Add your gym's plates once — weight and diameter — and future sets total up with a couple of taps. Black no-color plates are fine: diameter is what's matched.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    // First detection with an empty catalog: one tap seeds the
+                    // IWF set so the sighted plates can resolve to kilograms.
+                    Button {
+                        catalog.plates = PlateCatalog.standardIWFPlates
+                        try? PlateCatalogStore.save(catalog)
+                        SyncEngine.shared.pushPlateCatalog()
+                        applyDetection()
+                    } label: {
+                        Label(
+                            "Plates spotted on the bar — use the standard color set (IWF)?",
+                            systemImage: "circle.hexagongrid.fill"
+                        )
+                        .font(.caption)
+                    }
+                }
             } else {
                 plateChips
+            }
+            if let statusLine {
+                Label(statusLine, systemImage: "circle.dashed")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
             }
             ForEach(unknownDetections, id: \.self) { sighting in
                 Button {
@@ -142,6 +164,9 @@ struct PlatePickerView: View {
                     try? PlateCatalogStore.save(catalog)
                     SyncEngine.shared.pushPlateCatalog()
                     counts[plate] = 1
+                    // Other sighted classes may resolve now that the catalog
+                    // grew — re-apply instead of latching on the first pass.
+                    applyDetection()
                     syncTotal()
                 }
                 teachDiameter = nil
@@ -162,11 +187,12 @@ struct PlatePickerView: View {
         }
     }
 
-    /// Detection preselects one of each matched class exactly once — counts
-    /// stay the user's call, plates stack invisibly behind each other.
+    /// Detection preselects one of each matched class — counts stay the
+    /// user's call, plates stack invisibly behind each other. Re-runs
+    /// whenever the catalog grows (teach, seed): `counts[plate] == nil`
+    /// keeps it idempotent and never overrides an explicit zero.
     private func applyDetection() {
-        guard !appliedDetection, !detected.isEmpty else { return }
-        appliedDetection = true
+        guard !detected.isEmpty else { return }
         var matchedAny = false
         for sighting in detected {
             if let plate = catalog.match(
@@ -176,19 +202,59 @@ struct PlatePickerView: View {
                 matchedAny = true
             }
         }
-        if matchedAny { syncTotal() }
+        if matchedAny {
+            syncTotal()
+        } else if weightText.isEmpty {
+            // A bar was sighted even if no plate class resolved — the bar
+            // alone still beats an empty field. Never overwrites a typed or
+            // prefilled weight.
+            weightText = String(format: "%g", catalog.barWeightKg)
+        }
     }
 
     private func syncTotal() {
-        let total = catalog.totalKg(perSide: counts)
-        weightText = total > catalog.barWeightKg || counts.values.contains(where: { $0 > 0 })
-            ? String(format: "%g", total) : ""
+        weightText = Self.totalText(counts: counts, plateSighted: !detected.isEmpty, catalog: catalog)
+    }
+
+    /// Weight-field text for the current taps: the plate total when any are
+    /// tapped; the bar's own weight when a bar was sighted on camera but no
+    /// plates are tapped (a confirmed bar never weighs nothing); empty
+    /// otherwise. Static so the policy is unit-testable.
+    static func totalText(counts: [PlateSpec: Int], plateSighted: Bool, catalog: PlateCatalog) -> String {
+        if counts.values.contains(where: { $0 > 0 }) {
+            return String(format: "%g", catalog.totalKg(perSide: counts))
+        }
+        return plateSighted ? String(format: "%g", catalog.barWeightKg) : ""
+    }
+
+    /// Scan progress caption — silence looked like a missing feature, so the
+    /// running and empty-handed states say what happened.
+    private var statusLine: String? {
+        switch scanStatus {
+        case .searching: "Looking for plates on the bar…"
+        case .noDepth: "Plate detection needs LiDAR depth — tap plates or type the weight."
+        case .none: "No plates recognized — tap plates or type the weight."
+        case .found: nil
+        }
     }
 
     private func weightLabel(_ weight: Double) -> String {
         weight.truncatingRemainder(dividingBy: 1) == 0
             ? String(Int(weight)) : String(format: "%.2g", weight)
     }
+}
+
+/// Where the review-time plate scan stands. Detection's failure mode used to
+/// be silence; the picker renders these so "nothing happened" is explained.
+enum PlateScanStatus: Equatable {
+    /// Scan running (or re-running over the trimmed window).
+    case searching
+    /// No LiDAR sidecar — metric plate diameters are impossible without it.
+    case noDepth
+    /// Scan finished without recognizing a plate class.
+    case none
+    /// Sightings delivered.
+    case found
 }
 
 /// Sheet target: a measured-but-unknown plate awaiting its weight.

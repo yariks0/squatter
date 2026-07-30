@@ -17,6 +17,12 @@ struct AttemptReviewView: View {
     @State private var activity: ActivityType
     @State private var weightText = ""
     @State private var detectedPlates: [PlateDetector.Sighting] = []
+    @State private var plateScan: PlateScanStatus = .searching
+    /// What prefill last wrote — an unchanged field may be re-prefilled on
+    /// activity switch, a typed or detection-derived value may not.
+    @State private var lastPrefilledText = ""
+    /// Trim start of the last empty-handed rescan, to skip redundant passes.
+    @State private var rescannedFrom: TimeInterval = -1
 
     /// Shortest analyzable window — roughly one slow rep.
     private static let minimumWindow: TimeInterval = 2
@@ -65,7 +71,11 @@ struct AttemptReviewView: View {
 
             weightField
 
-            PlatePickerView(weightText: $weightText, detected: detectedPlates)
+            PlatePickerView(
+                weightText: $weightText,
+                detected: detectedPlates,
+                scanStatus: plateScan
+            )
 
             Button {
                 if let weight = enteredWeightKg {
@@ -89,15 +99,21 @@ struct AttemptReviewView: View {
         .navigationBarTitleDisplayMode(.inline)
         .task {
             duration = (try? await AVURLAsset(url: videoURL).load(.duration).seconds) ?? 0
+            trimStart = 0
             trimEnd = duration
             prefillWeight()
             player.play()
             // Plate recognition off the setup frames — suggestion only, the
             // field stays the user's.
-            if let detection = await PlateDetector.detect(
+            if depthSidecarURL == nil {
+                plateScan = .noDepth
+            } else if let detection = await PlateDetector.detect(
                 videoURL: videoURL, depthSidecarURL: depthSidecarURL
-            ) {
+            ), !detection.sightings.isEmpty {
                 detectedPlates = detection.sightings
+                plateScan = .found
+            } else {
+                plateScan = .none
             }
         }
         .onChange(of: activity) { prefillWeight() }
@@ -131,8 +147,13 @@ struct AttemptReviewView: View {
     }
 
     private func prefillWeight() {
+        // Only touch a field that is empty or still holds the previous
+        // prefill — switching activity must not clobber a typed weight or a
+        // plate-detection total.
+        guard weightText.isEmpty || weightText == lastPrefilledText else { return }
         let stored = UserDefaults.standard.double(forKey: Self.lastWeightKey(for: activity))
         weightText = stored > 0 ? String(format: "%g", stored) : ""
+        lastPrefilledText = weightText
     }
 
     private var trimSection: some View {
@@ -148,6 +169,8 @@ struct AttemptReviewView: View {
                     to: CMTime(seconds: time, preferredTimescale: 600),
                     toleranceBefore: .zero, toleranceAfter: .zero
                 )
+            } onScrubEnded: {
+                rescanPlatesInTrimmedWindow()
             }
             Text(selectedRange == nil
                 ? "Drag the handles to trim to just your reps — analysis skips the rest."
@@ -160,8 +183,29 @@ struct AttemptReviewView: View {
     /// Non-nil only when the handles were actually moved off the ends.
     private var selectedRange: ClosedRange<TimeInterval>? {
         guard duration > 0, trimEnd > trimStart else { return nil }
-        let trimmed = trimStart > 0.2 || trimEnd < duration - 0.2
+        let trimmed = trimStart > 0.01 || trimEnd < duration - 0.01
         return trimmed ? trimStart ... trimEnd : nil
+    }
+
+    /// Fallback pass when the primary scan came up empty: the primary scan
+    /// covers the first seconds of the raw file, but if the lifter trimmed a
+    /// long walk-in away, the frames worth scanning start at the trim point.
+    private func rescanPlatesInTrimmedWindow() {
+        guard plateScan == .none, trimStart > 1, let range = selectedRange,
+              abs(trimStart - rescannedFrom) > 0.5
+        else { return }
+        rescannedFrom = trimStart
+        plateScan = .searching
+        Task {
+            if let detection = await PlateDetector.detect(
+                videoURL: videoURL, depthSidecarURL: depthSidecarURL, within: range
+            ), !detection.sightings.isEmpty {
+                detectedPlates = detection.sightings
+                plateScan = .found
+            } else {
+                plateScan = .none
+            }
+        }
     }
 
     private var analyzeTitle: String {
@@ -185,6 +229,7 @@ private struct TrimRangeBar: View {
     @Binding var start: TimeInterval
     @Binding var end: TimeInterval
     var onScrub: (TimeInterval) -> Void
+    var onScrubEnded: () -> Void = {}
 
     private let handleWidth: CGFloat = 22
     private let barHeight: CGFloat = 40
@@ -220,6 +265,7 @@ private struct TrimRangeBar: View {
                                 )
                                 onScrub(start)
                             }
+                            .onEnded { _ in onScrubEnded() }
                     )
                 handle(at: endX - handleWidth, systemImage: "chevron.compact.right")
                     .gesture(
@@ -231,6 +277,7 @@ private struct TrimRangeBar: View {
                                 )
                                 onScrub(end)
                             }
+                            .onEnded { _ in onScrubEnded() }
                     )
             }
             .coordinateSpace(name: Self.spaceName)
@@ -249,8 +296,13 @@ private struct TrimRangeBar: View {
                     .font(.footnote.bold())
                     .foregroundStyle(.white)
             )
-            .offset(x: x)
+            // contentShape must come *before* offset: offset is a geometry
+            // effect that doesn't move the layout frame, and a hit shape
+            // applied outside it stays pinned at the un-offset position —
+            // both handles then overlap at the bar's left edge and the top
+            // one swallows every drag.
             .contentShape(Rectangle().inset(by: -12))
+            .offset(x: x)
     }
 
     private func position(of time: TimeInterval, in width: CGFloat) -> CGFloat {

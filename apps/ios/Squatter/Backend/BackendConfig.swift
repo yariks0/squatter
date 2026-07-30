@@ -11,8 +11,7 @@ enum BackendConfig {
         // Update when the Mac's IP changes (`ipconfig getifaddr en0`).
         return URL(string: "http://192.168.3.70:8080")!
         #else
-        // Set to the deployed API before shipping a release build.
-        return URL(string: "https://api.squatter.example.com")!
+        return URL(string: "https://api.squatter.fit")!
         #endif
     }()
 }

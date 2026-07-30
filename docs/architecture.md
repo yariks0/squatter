@@ -29,12 +29,16 @@ UI (HomeView routes)
  │          PoseExtractor.extract(video, depthSidecar) ──▶ JointSeries
  │          SquatAnalyzer.analyze(series, activity, profile: BodyGeometryProfileStore.load())
  │          └─▶ SquatAnalysis ──▶ ReportView / saved as WorkoutSession (SwiftData)
- │                ReportView: PlayerOverlayView draws the skeleton, coloring
- │                  faulted parts red via FormFaultDetector (per-frame checks
- │                  with the FormRules thresholds); CoachSectionView →
- │                  CoachClient (KeyframeExtractor rep-bottom JPEGs →
- │                  backend /v1/coach proxy → Anthropic), cached by
- │                  CoachReportStore
+ │                ReportView: PlayerOverlayView draws the skeleton via the
+ │                  shared SkeletonRenderer (classification + CG drawing;
+ │                  faults red via FormFaultDetector, repaired/low-confidence
+ │                  joints dimmed, uncertain beats fault); CoachSectionView →
+ │                  CoachClient (KeyframePlanner picks per-rep phase frames
+ │                  within the 30-image budget → KeyframeExtractor extracts
+ │                  them and composites skeleton overlays → backend /v1/coach
+ │                  proxy → Anthropic), cached by CoachReportStore; the
+ │                  report's tracking_verification verdicts render as a
+ │                  "Tracking check" block when a rep mismatches
  ├─ BodyScanGuideView → RecordView → BodyScanResultView
  │        PoseExtractor.extract → SquatAnalyzer.profileScan → BodyGeometryProfile(Store)
  └─ SessionReportView (reopens saved sessions; can re-analyze)
@@ -54,10 +58,10 @@ SquatAnalyzer.analyze (pure, no I/O — the whole Analysis layer is UI-free):
 ```
 
 Type→file exceptions (everything else lives in `<TypeName>.swift`):
-`JointSeriesSmoother` → `Smoothing.swift`; `PlatePickerView` →
-`PlateWeightView.swift`; `SessionReportView` → private in `HomeView.swift`;
+`JointSeriesSmoother` → `Smoothing.swift`; `PlatePickerView`/`PlateScanStatus`
+→ `PlateWeightView.swift`; `SessionReportView` → private in `HomeView.swift`;
 `AnalysisView`/`AnalysisViewModel` → `AnalysisFlow.swift`; `FrameFaults` →
-`FormFaultDetector.swift`.
+`FormFaultDetector.swift`; `CoachKeyframe` → `KeyframeExtractor.swift`.
 
 ## Pipeline stages: inputs, outputs, invariants
 
@@ -72,7 +76,7 @@ Type→file exceptions (everything else lives in `<TypeName>.swift`):
 | `RepSegmenter` | Signal per lift: squat = hip-above-ankle distance, bench = wrist–shoulder distance, deadlift = wrist–ankle distance. Signals are `[Double?]`: untracked frames are nil (`heldSignal` holds dropouts ≤ `repairMaxGapFrames`, longer gaps and leading frames stay nil — inventing 0 once minted phantom reps). Segmentation opens a window only on a tracked sample, skips interior nils inside a window (occlusion mid-rep must not drop or split the rep), and accepts a rep only when a *tracked* value rose back through the exit (an untracked tail is a cut-off recording, not a rep). Standing baseline = 90th percentile of tracked samples. |
 | `MetricsCalculator` | Per-rep `RepMetrics`. Squat depth = `hipBelowKneeDegrees` (femur vs horizontal, + = below parallel). `stanceWidthRatio` is **image-x spans** (see facts), nil from side views. `VelocityCalculator` cleans a **local copy** of the stored-raw `barTrack` at consumption (detrended Hampel on y and scale, quadratic SG on interior y, edge samples never smoothed — they anchor mean velocity): a single mislocked wrist sample otherwise fakes a multi-m/s peak (real sessions: 5.03 → 2.21, 3.51 → 3.10; clean-set MCV shifts ≤ 1.3%). |
 | `FormRules` | Thresholds all in `AnalysisTuning`. Squat judged vs Chinese high-bar practice; `depthReference` (profile deep hold) personalizes the full-depth line (capped by the absolute standard) and adds "Depth in reserve". |
-| `PlateDetector` | Review-time, not pipeline. 2D wrists → bar line → sleeve crops; depth sampled **at each sleeve** (near/far differ ~1 m at 45°); plate faces = ellipses, vertical axis = true diameter; ring-pixel color vote. Emits diameter+color *classes*, never counts (identical plates stack invisibly). Untuned on real footage: gates conservative, failure mode is silence. |
+| `PlateDetector` | Review-time, not pipeline. 2D wrists → bar line → sleeve crops; depth sampled **at each sleeve** (near/far differ ~1 m at 45°); plate faces = ellipses, vertical axis = true diameter; ring-pixel color vote. Emits diameter+color *classes*, never counts (identical plates stack invisibly). Untuned on real footage: gates conservative — but no longer silent: `PlateScanStatus` (searching / noDepth / none / found) renders as a caption in the plate picker, and an empty-handed scan re-runs over the trimmed window when the user drags the start handle past the walk-in. With an empty catalog the picker offers a one-tap IWF seed when plates are sighted; a sighted bar with zero tapped plates prefills the bar weight alone (`PlatePickerView.totalText`); detection re-applies after every teach/seed (no one-shot latch); an activity switch only re-prefills an untouched weight field. |
 
 ## Persistence (backward compatibility is law)
 
@@ -116,10 +120,12 @@ Caddy TLS edge, db + api unpublished; see "Production deployment" below). See
 - **Coach proxy is a guarded pass-through, not a reimplementation**: the app
   sends the whole Anthropic Messages body; the server allowlists top-level
   fields, **overwrites `model`** with `COACH_MODEL`, caps `max_tokens`/image
-  count/size, enforces a per-user daily quota (`coach_usage`), injects
+  count/size (`coach.DefaultLimits`: 24000 tokens, 30 images, 2 MiB each),
+  enforces a per-user daily quota (`coach_usage`), injects
   `ANTHROPIC_API_KEY`, and returns the upstream response byte-for-byte.
   `CoachPrompt` stays in Swift so live `AnalysisTuning` thresholds aren't
-  duplicated.
+  duplicated. **Cap bumps deploy server-first**: an old server 400s a client
+  that sends the new, higher `max_tokens`.
 - **OTP auth**: 6-digit codes, HMAC-SHA256 + per-code salt at rest, 10-min
   expiry, 5-attempt cap, single-use, 60 s resend cooldown + 5/hr per email +
   10/min per IP. Users created lazily on first verify (no existence leak).
@@ -254,6 +260,47 @@ boot, so there is no migrate step. Full runbook in `apps/backend/README.md`.
    `[key, value, …]` arrays in JSON (Python: pairwise-unpack).
 4. Simulator tests failing with "Busy / Application failed preflight
    checks": `xcrun simctl shutdown all`, retry.
+
+## Coach input format & tracking verification
+
+The coach request is per-rep interleaved: one header block (set line, capture
+mode, metric conventions, rules-engine findings), then for each rep its
+metric line — including the measured `trackingJitter` against the gate —
+followed by that rep's images, each preceded by a metadata label (rep, phase,
+`t=`, pixel dimensions, rendition, key tracked joint pixels, uncertain joints
+with reasons). `KeyframePlanner` (pure, tested) picks phases per lift —
+squat bottom / bench setup+touch+lockout / deadlift setup+liftoff+lockout —
+and fits the 30-image budget by degrading setups → lockouts → pairs →
+tier-2 → even stride, always keeping the raw+overlay *pairs* of the first,
+last, and worst-jitter reps. `KeyframeExtractor` extracts at the generator's
+**actualTime** (±0.1 s tolerance would desync the skeleton from the pixels
+otherwise) and composites overlays via `SkeletonRenderer` — the same
+classification the playback overlay draws (uncertain beats fault).
+
+The system prompt runs **two missions**: coaching (trust metrics over pixels
+*for verified reps*) and tracking verification — compare the drawn skeleton
+against the visible body per overlay rep and emit `tracking_verification`
+verdicts (`matches` / `minor_drift` / `mismatch` + joints + note) in the
+output schema. A `mismatch` is the one case where the image outranks the
+numbers. `CoachReport.trackingVerification` is optional (old cached `.coach`
+files decode); `CoachSectionView` renders a "Tracking check" block only when
+some rep isn't `matches`.
+
+## Tracking-verification tuning loop (manual)
+
+The verdicts are a reality check on the tracking pipeline that jitter gates
+can't provide (partial dropouts read as clean jitter). After real sessions:
+
+1. Pull the app container (replay workflow above): `Recordings/` +
+   `default.store*` + the cached `.coach` files beside the videos.
+2. For each `mismatch`/`minor_drift` verdict, note rep + joints, extract that
+   session's analysis JSON from sqlite, and replay the tracking stages
+   (`JointTrackRepair`, `SkeletonCorrector`, `TrackingQuality`) in the
+   standalone swiftc harness against the pulled video.
+3. Verdicts that the jitter gates did **not** catch are the tuning signal:
+   adjust `AnalysisTuning` (jitter gates, `overlayConfidenceFloor`, repair
+   thresholds) and re-replay until flagged frames are caught or fixed. Never
+   tune on synthetic alone.
 
 ## Session/device notes
 

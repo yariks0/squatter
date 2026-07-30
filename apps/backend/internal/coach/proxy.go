@@ -21,7 +21,7 @@ type Limits struct {
 	MaxImageBytes int // decoded size per image block
 }
 
-var DefaultLimits = Limits{MaxTokens: 16000, MaxImages: 30, MaxImageBytes: 2 << 20}
+var DefaultLimits = Limits{MaxTokens: 24000, MaxImages: 30, MaxImageBytes: 2 << 20}
 
 // allowedKeys is the closed set of top-level Messages-API fields the app
 // legitimately sends; anything else is rejected rather than forwarded.

@@ -37,7 +37,7 @@ enum CoachClient {
 
         let body: [String: Any] = [
             "model": model,
-            "max_tokens": 16000,
+            "max_tokens": 24000,
             "thinking": ["type": "adaptive"],
             "system": CoachPrompt.systemPrompt(activity: analysis.kind),
             "messages": [[

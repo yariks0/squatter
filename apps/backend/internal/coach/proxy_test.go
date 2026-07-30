@@ -10,7 +10,7 @@ func minimalBody(t *testing.T, extra map[string]any) []byte {
 	t.Helper()
 	body := map[string]any{
 		"model":      "claude-should-be-overwritten",
-		"max_tokens": 16000,
+		"max_tokens": 24000,
 		"messages": []any{
 			map[string]any{"role": "user", "content": "hi"},
 		},
@@ -50,6 +50,17 @@ func TestValidateRejectsHighMaxTokens(t *testing.T) {
 	body := minimalBody(t, map[string]any{"max_tokens": 100000})
 	if _, err := ValidateAndPrepare(body, "m", DefaultLimits); err == nil {
 		t.Fatal("expected rejection of oversized max_tokens")
+	}
+}
+
+func TestValidateMaxTokensCapBoundary(t *testing.T) {
+	atCap := minimalBody(t, map[string]any{"max_tokens": DefaultLimits.MaxTokens})
+	if _, err := ValidateAndPrepare(atCap, "m", DefaultLimits); err != nil {
+		t.Fatalf("max_tokens at the cap should pass: %v", err)
+	}
+	overCap := minimalBody(t, map[string]any{"max_tokens": DefaultLimits.MaxTokens + 1})
+	if _, err := ValidateAndPrepare(overCap, "m", DefaultLimits); err == nil {
+		t.Fatal("expected rejection one over the cap")
 	}
 }
 

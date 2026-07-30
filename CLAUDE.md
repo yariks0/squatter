@@ -59,11 +59,19 @@ checks" → `xcrun simctl shutdown all` and retry.
   `FormFaultDetector` (per-frame fault flags coloring the video overlay),
   and `LiveRepCounter` (2D live rep counting) also live here.
 - `apps/ios/Squatter/Coach/` — Anthropic coaching: `CoachClient` +
-  `KeyframeExtractor` (rep-bottom JPEGs); `CoachPrompt` embeds live
-  thresholds; `CoachReport` mirrors `CoachPrompt.outputSchema` — keep in
-  sync. Report cached as `.coach` beside the video. `CoachClient` POSTs the
-  Anthropic body to the backend `/v1/coach` proxy with the session bearer —
-  the Anthropic key lives server-side now, not in the app.
+  `KeyframePlanner` (pure per-lift phase/budget selection) +
+  `KeyframeExtractor` (phase JPEGs at the generator's actualTime, tier-1
+  phases as raw + `SkeletonRenderer`-composited overlay pairs); `CoachPrompt`
+  embeds live thresholds, interleaves each rep's metrics with its labeled
+  images, and runs two missions — coaching plus skeleton-vs-footage
+  verification (`tracking_verification` verdicts; a mismatch is the one case
+  where images outrank metrics); `CoachReport` mirrors
+  `CoachPrompt.outputSchema` — keep in sync (new report fields optional: old
+  `.coach` caches must decode). Report cached as `.coach` beside the video.
+  `CoachClient` POSTs the Anthropic body to the backend `/v1/coach` proxy
+  with the session bearer — the Anthropic key lives server-side now, not in
+  the app. Proxy cap bumps (max_tokens etc.) deploy server-first. See
+  "Coach input format & tracking verification" in `docs/architecture.md`.
 - `apps/ios/Squatter/Backend/` — the account/sync layer: `BackendConfig` (base URL
   per build config), `AuthTokenStore` (Keychain bearer, was `CoachKeyStore`),
   `ApiClient` (snake_case + fractional-second ISO8601, bearer injection,

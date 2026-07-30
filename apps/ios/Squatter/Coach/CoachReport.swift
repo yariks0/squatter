@@ -44,15 +44,34 @@ struct CoachReport: Codable, Sendable {
         }
     }
 
+    /// The model's skeleton-vs-footage check for one overlay-carrying rep.
+    struct TrackingVerdict: Codable, Sendable {
+        /// "matches" | "minor_drift" | "mismatch".
+        var verdict: String
+        var repNumber: Int
+        /// BodyJoint raw values the verdict is about (empty for "matches").
+        var joints: [String]
+        /// One sentence on what the skeleton got wrong.
+        var note: String
+
+        enum CodingKeys: String, CodingKey {
+            case verdict, joints, note
+            case repNumber = "rep_number"
+        }
+    }
+
     /// Two-to-three sentence overall read of the set.
     var summary: String
     var priorityFix: PriorityFix
     var findings: [CoachFinding]
     /// Things done well, worth keeping.
     var positives: [String]
+    /// Optional so cached reports from before the verification mission decode.
+    var trackingVerification: [TrackingVerdict]?
 
     enum CodingKeys: String, CodingKey {
         case summary, findings, positives
         case priorityFix = "priority_fix"
+        case trackingVerification = "tracking_verification"
     }
 }

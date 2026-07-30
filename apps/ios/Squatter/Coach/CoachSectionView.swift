@@ -110,6 +110,36 @@ struct CoachSectionView: View {
                     }
                 }
             }
+
+            trackingCheck(report)
+        }
+    }
+
+    /// Reps where the model saw the drawn skeleton off the lifter's body.
+    /// Silent when everything matches (or the report predates verification) —
+    /// the check only speaks when a rep's numbers shouldn't be trusted.
+    @ViewBuilder
+    private func trackingCheck(_ report: CoachReport) -> some View {
+        let flagged = (report.trackingVerification ?? [])
+            .filter { $0.verdict != "matches" }
+        if !flagged.isEmpty {
+            VStack(alignment: .leading, spacing: 3) {
+                Label("Tracking check", systemImage: "eye.trianglebadge.exclamationmark")
+                    .font(.caption.bold())
+                ForEach(flagged, id: \.repNumber) { verdict in
+                    let joints = verdict.joints.isEmpty
+                        ? "" : " — \(verdict.joints.joined(separator: ", "))"
+                    Text("Rep \(verdict.repNumber): \(verdict.verdict == "mismatch" ? "skeleton mismatch" : "minor drift")\(joints). \(verdict.note)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Text("Metrics from mismatched reps were down-weighted in this review.")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(.orange.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
         }
     }
 

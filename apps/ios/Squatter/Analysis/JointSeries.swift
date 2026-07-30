@@ -89,4 +89,22 @@ struct JointSeries: Codable, Sendable {
         guard let first = frames.first, let last = frames.last else { return 0 }
         return last.time - first.time
     }
+
+    /// Binary-search the frame closest to `time`; nil when tracking dropped
+    /// out for longer than `maxGap` around it (don't draw or judge a
+    /// skeleton nobody measured). Shared by the playback overlay and the
+    /// coach keyframe compositor.
+    func nearestFrame(to time: TimeInterval, maxGap: TimeInterval = 0.25) -> JointFrame? {
+        guard !frames.isEmpty else { return nil }
+        var low = 0, high = frames.count - 1
+        while low < high {
+            let mid = (low + high) / 2
+            if frames[mid].time < time { low = mid + 1 } else { high = mid }
+        }
+        var best = frames[low]
+        if low > 0, abs(frames[low - 1].time - time) < abs(best.time - time) {
+            best = frames[low - 1]
+        }
+        return abs(best.time - time) <= maxGap ? best : nil
+    }
 }

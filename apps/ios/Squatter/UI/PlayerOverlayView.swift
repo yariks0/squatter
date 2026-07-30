@@ -60,66 +60,50 @@ private struct SkeletonOverlay: View {
 
     var body: some View {
         Canvas { context, size in
-            guard let frame = nearestFrame(to: time) else { return }
+            guard let frame = series.nearestFrame(to: time) else { return }
             let faults = FormFaultDetector.faults(
                 in: frame, at: frame.time, reps: reps, activity: activity
             )
-            func point(_ joint: BodyJoint) -> CGPoint? {
-                guard let p = frame.imagePoints[joint] else { return nil }
-                // Vision image points: normalized, origin bottom-left.
-                return CGPoint(x: CGFloat(p.x) * size.width, y: (1 - CGFloat(p.y)) * size.height)
-            }
-            // Parts breaking form right now (folding torso, caving knee)
-            // draw red; everything in position stays green. Bones with a
-            // repaired or low-confidence endpoint dim to a hint — and never
-            // draw red: a fault may not be asserted from an invented joint.
-            var okPath = Path()
-            var faultPath = Path()
-            var uncertainPath = Path()
-            for bone in BodyJoint.bones {
-                guard let pa = point(bone.0), let pb = point(bone.1) else { continue }
-                if frame.isUncertain(bone.0) || frame.isUncertain(bone.1) {
-                    uncertainPath.move(to: pa)
-                    uncertainPath.addLine(to: pb)
-                } else if BodyJoint.faulted(bone, by: faults) {
-                    faultPath.move(to: pa)
-                    faultPath.addLine(to: pb)
-                } else {
-                    okPath.move(to: pa)
-                    okPath.addLine(to: pb)
+            // Classification (fault red / ok green / uncertain dim, uncertain
+            // wins) lives in SkeletonRenderer, shared with the coach keyframe
+            // compositor.
+            let segments = SkeletonRenderer.segments(frame: frame, faults: faults, size: size)
+            func path(_ state: SkeletonRenderer.SegmentState) -> Path {
+                var path = Path()
+                for bone in segments.bones where bone.state == state {
+                    path.move(to: bone.from)
+                    path.addLine(to: bone.to)
                 }
+                return path
             }
-            context.stroke(okPath, with: .color(.green.opacity(0.8)), lineWidth: 3)
-            context.stroke(faultPath, with: .color(.red.opacity(0.9)), lineWidth: 4)
-            context.stroke(uncertainPath, with: .color(.green.opacity(0.25)), lineWidth: 2)
-            for joint in BodyJoint.allCases {
-                guard let p = point(joint) else { continue }
-                let color: Color = frame.isUncertain(joint)
-                    ? .green.opacity(0.25)
-                    : joint.faulted(by: faults) ? .red : .green
+            context.stroke(
+                path(.ok), with: .color(.green.opacity(0.8)),
+                lineWidth: SkeletonRenderer.okLineWidth
+            )
+            context.stroke(
+                path(.fault), with: .color(.red.opacity(0.9)),
+                lineWidth: SkeletonRenderer.faultLineWidth
+            )
+            context.stroke(
+                path(.uncertain), with: .color(.green.opacity(0.25)),
+                lineWidth: SkeletonRenderer.uncertainLineWidth
+            )
+            let radius = SkeletonRenderer.jointDotRadius
+            for joint in segments.joints {
+                let color: Color = switch joint.state {
+                case .uncertain: .green.opacity(0.25)
+                case .fault: .red
+                case .ok: .green
+                }
                 context.fill(
-                    Path(ellipseIn: CGRect(x: p.x - 4, y: p.y - 4, width: 8, height: 8)),
+                    Path(ellipseIn: CGRect(
+                        x: joint.point.x - radius, y: joint.point.y - radius,
+                        width: radius * 2, height: radius * 2
+                    )),
                     with: .color(color)
                 )
             }
         }
         .allowsHitTesting(false)
-    }
-
-    private func nearestFrame(to time: TimeInterval) -> JointFrame? {
-        let frames = series.frames
-        guard !frames.isEmpty else { return nil }
-        var low = 0, high = frames.count - 1
-        while low < high {
-            let mid = (low + high) / 2
-            if frames[mid].time < time { low = mid + 1 } else { high = mid }
-        }
-        // Pick the closer of the found frame and its predecessor; hide the
-        // skeleton if tracking dropped out for more than a quarter second.
-        var best = frames[low]
-        if low > 0, abs(frames[low - 1].time - time) < abs(best.time - time) {
-            best = frames[low - 1]
-        }
-        return abs(best.time - time) <= 0.25 ? best : nil
     }
 }

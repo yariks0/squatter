@@ -6,11 +6,6 @@ import Foundation
 /// findings, and labeled keyframes — so the model adds judgment on top of the
 /// geometry instead of re-guessing it.
 enum CoachPrompt {
-    struct Keyframe: Sendable {
-        var label: String
-        var jpegData: Data
-    }
-
     static func systemPrompt(activity: ActivityType = .squat) -> String {
         switch activity {
         case .squat: squatSystemPrompt()
@@ -63,7 +58,8 @@ enum CoachPrompt {
         3D body pose at 15 fps (LiDAR depth when the capture notes say so), \
         smoothed before metrics; the bar height signal is the 3D \
         wrist-to-ankle distance. Trust the numbers for spine line, bar gap, \
-        hip/shoulder timing, tempo, and lockout. The camera sits about 3 m \
+        hip/shoulder timing, tempo, and lockout on reps whose skeleton \
+        overlay you verify as matching the footage. The camera sits about 3 m \
         away at a 45° front-side angle, so far-side joints may be partly \
         occluded and plates can hide the shins. Use the images for what the \
         skeleton cannot see: grip (double overhand vs mixed), bar over the \
@@ -134,7 +130,8 @@ enum CoachPrompt {
         smoothed before metrics. The lifter lies on a bench, so the bar \
         height signal is the 3D wrist-to-shoulder distance (the pose model's \
         space is not world-aligned for a lying body). Trust the numbers for \
-        touch depth, flare, tempo, and lockout. The camera sits about 3 m \
+        touch depth, flare, tempo, and lockout on reps whose skeleton \
+        overlay you verify as matching the footage. The camera sits about 3 m \
         away at bench height, ~45° from the foot of the bench, so far-side \
         joints may be partly occluded and plates can hide a wrist. Use the \
         images for what the skeleton cannot see: grip width, wrist stacking, \
@@ -217,7 +214,9 @@ enum CoachPrompt {
         3D body pose at 15 fps (LiDAR depth when the capture notes say so), \
         smoothed before metrics. Angles in the metrics are computed from that \
         3D skeleton and are more precise than what you can estimate from \
-        pixels — trust the numbers for depth, lean, valgus, and tempo. The \
+        pixels — trust the numbers for depth, lean, valgus, and tempo on \
+        reps whose skeleton overlay you verify as matching the footage (see \
+        the verification mission below). The \
         camera sits roughly 3 m away at a 45° front-side angle, so far-side \
         joints in the images may be partly occluded. Use the images for what \
         the skeleton cannot see: bar position on the back, grip and elbow \
@@ -233,11 +232,34 @@ enum CoachPrompt {
     private static var responseGuidelines: String {
         let topics = FormHintTopic.allCases.map(\.rawValue).joined(separator: ", ")
         return """
-        Grounding rules: every claim must name the rep(s) it applies to and \
-        be supported by either a metric or something visible in a labeled \
-        image. Do not restate the rules-engine findings you are given unless \
-        you add new information; never contradict a metric based on an image. \
-        Mark confidence "low" when the evidence is a partly occluded image.
+        You have two missions: coach the set, and verify the tracking that \
+        measured it.
+
+        Mission 1 — coaching. Grounding rules: every claim must name the \
+        rep(s) it applies to and be supported by either a metric or \
+        something visible in a labeled image. Do not restate the \
+        rules-engine findings you are given unless you add new information. \
+        For reps whose tracking you verified as matching, the \
+        skeleton-derived metrics are more precise than pixel estimates — \
+        trust the numbers over your visual read. Mark confidence "low" when \
+        the evidence is a partly occluded image.
+
+        Mission 2 — tracking verification. Images labeled SKELETON OVERLAY \
+        show the tracked skeleton drawn on the very pixels it was measured \
+        from, with the tracked joint pixel coordinates listed above the \
+        image. For every rep that has one, compare each drawn joint against \
+        the lifter's visible body and report a verdict in \
+        tracking_verification: "matches" (joints sit on the body), \
+        "minor_drift" (offsets under roughly one joint's width; metrics \
+        still usable), or "mismatch" (a drawn joint sits off the body — on \
+        the bar, the background, or the wrong limb). Name affected joints \
+        exactly as spelled in the labels and say in one sentence what the \
+        skeleton got wrong. For "mismatch" reps treat that rep's affected \
+        metrics as unreliable — do not coach from them, and say so; this is \
+        the one case where the image outranks the numbers. Use a raw twin \
+        frame, when present, to check what the overlay lines occlude. Faint \
+        overlay joints were already flagged uncertain by the pipeline — \
+        still verify them, but weigh their drift less harshly.
 
         Coach, don't judge: open the summary with what the lifter did well, \
         name the root physical cause behind each fault (not just the \
@@ -263,27 +285,74 @@ enum CoachPrompt {
         """
     }
 
-    /// User-turn content blocks: set context and metrics first, then each
-    /// keyframe preceded by its label, then the ask.
-    static func userContent(analysis: SquatAnalysis, keyframes: [Keyframe]) -> [[String: Any]] {
-        var blocks: [[String: Any]] = [["type": "text", "text": setContext(analysis)]]
-        for keyframe in keyframes {
-            blocks.append(["type": "text", "text": keyframe.label])
+    /// User-turn content blocks: set header and findings first, then each
+    /// rep's metric line followed by that rep's labeled images — every image
+    /// is anchored to the rep it shows — then the ask.
+    static func userContent(analysis: SquatAnalysis, keyframes: [CoachKeyframe]) -> [[String: Any]] {
+        var blocks: [[String: Any]] = [["type": "text", "text": setHeader(analysis)]]
+        let jitterMeasured = analysis.reps.contains { $0.trackingJitter != nil }
+        let keyframesByRep = Dictionary(grouping: keyframes, by: \.repNumber)
+        for rep in analysis.reps {
             blocks.append([
-                "type": "image",
-                "source": [
-                    "type": "base64",
-                    "media_type": "image/jpeg",
-                    "data": keyframe.jpegData.base64EncodedString(),
-                ],
+                "type": "text",
+                "text": repLine(rep, kind: analysis.kind, jitterMeasured: jitterMeasured),
             ])
+            var previous: CoachKeyframe?
+            for keyframe in keyframesByRep[rep.repNumber] ?? [] {
+                let paired = previous.map {
+                    !$0.isOverlay && keyframe.isOverlay
+                        && $0.phase == keyframe.phase && $0.time == keyframe.time
+                } ?? false
+                blocks.append([
+                    "type": "text",
+                    "text": label(for: keyframe, pairedWithPrevious: paired),
+                ])
+                blocks.append([
+                    "type": "image",
+                    "source": [
+                        "type": "base64",
+                        "media_type": "image/jpeg",
+                        "data": keyframe.jpegData.base64EncodedString(),
+                    ],
+                ])
+                previous = keyframe
+            }
         }
         blocks.append(["type": "text", "text": """
             Assess this set against the standard above. Give the single \
             highest-value fix for the next set, any findings the rules engine \
-            missed or under/over-called, and what the lifter should keep doing.
+            missed or under/over-called, and what the lifter should keep \
+            doing. Then complete the tracking verification: one verdict per \
+            rep that has a SKELETON OVERLAY image.
             """])
         return blocks
+    }
+
+    /// Metadata label preceding each image, so the model can name locations
+    /// in it and knows which rendition it is looking at.
+    private static func label(for keyframe: CoachKeyframe, pairedWithPrevious: Bool) -> String {
+        let rendition = keyframe.isOverlay
+            ? "SKELETON OVERLAY (green = tracked bone, red = form fault, faint = repaired/low-confidence joint)"
+                + (pairedWithPrevious ? " — same instant as the raw frame above" : "")
+            : "RAW FRAME"
+        var lines = [String(
+            format: "Rep %d — %@, t=%.1f s, %d×%d px, %@",
+            keyframe.repNumber, keyframe.phase.rawValue, keyframe.time,
+            Int(keyframe.pixelSize.width), Int(keyframe.pixelSize.height), rendition
+        )]
+        if !keyframe.jointPixels.isEmpty {
+            let joints = keyframe.jointPixels
+                .map { "\($0.joint.rawValue) (\(Int($0.point.x)), \(Int($0.point.y)))" }
+                .joined(separator: ", ")
+            lines.append("Tracked joint pixels (x, y from top-left): \(joints).")
+        }
+        if !keyframe.uncertainJoints.isEmpty {
+            let uncertain = keyframe.uncertainJoints
+                .map { "\($0.joint.rawValue) (\($0.reason))" }
+                .joined(separator: ", ")
+            lines.append("Uncertain: \(uncertain).")
+        }
+        return lines.joined(separator: "\n")
     }
 
     /// Marker appended to a rep line whose tracking window flickered: its
@@ -302,7 +371,10 @@ enum CoachPrompt {
         return " — TRACKING UNRELIABLE: this rep's angles are noise; do not judge form from its numbers or keyframe"
     }
 
-    private static func setContext(_ analysis: SquatAnalysis) -> String {
+    /// Opening text block: what the set is, how it was captured, the metric
+    /// conventions, and the deterministic findings. Per-rep lines follow as
+    /// their own blocks so each rep's images sit next to its numbers.
+    private static func setHeader(_ analysis: SquatAnalysis) -> String {
         var lines: [String] = []
         lines.append("Set: \(analysis.kind.displayName), \(analysis.reps.count) reps, score \(analysis.score)/100.")
         lines.append(analysis.usedDepth
@@ -312,113 +384,7 @@ enum CoachPrompt {
             lines.append(String(format: "Estimated body height: %.2f m.", height))
         }
         lines.append("")
-        let jitterMeasured = analysis.reps.contains { $0.trackingJitter != nil }
-        switch analysis.kind {
-        case .squat:
-            lines.append("Per-rep metrics (femur angle positive = hip below knee):")
-            for rep in analysis.reps {
-                // nil femur angle = no femur tracked at the bottom; omit it
-                // rather than feeding the coach an invented number.
-                let femur = rep.hipBelowKneeDegrees
-                    .map { String(format: "femur %+.0f°, ", $0) } ?? ""
-                var line = String(
-                    format: "Rep %d: %@torso lean %.0f°, valgus %.2f×hip width, down %.1f s, up %.1f s, L/R knee diff %.0f°",
-                    rep.repNumber, femur, rep.torsoLeanDegrees,
-                    rep.kneeValgusRatio, rep.eccentricSeconds, rep.concentricSeconds,
-                    rep.asymmetryDegrees
-                )
-                if let stance = rep.stanceWidthRatio {
-                    line += String(format: ", stance %.2f×shoulder width", stance)
-                }
-                if let shift = rep.bottomHipShiftRatio {
-                    line += String(format: ", bottom pelvis drift %.2f×hip width", shift)
-                }
-                if let lockout = rep.lockoutKneeDegrees {
-                    line += String(format: ", top knee %.0f°", lockout)
-                }
-                if let shin = rep.shinAngleDegrees {
-                    line += String(format: ", shin %.0f°", shin)
-                }
-                if let balance = rep.balanceDriftRatio {
-                    line += String(format: ", bar-over-midfoot offset %.2f×hip width", balance)
-                }
-                if let lift = rep.elbowLiftDegrees {
-                    line += String(format: ", elbow lift %.0f°", lift)
-                }
-                if let velocity = rep.meanConcentricVelocity {
-                    line += String(format: ", MCV %.2f m/s", velocity)
-                }
-                line += trackingCaveat(rep, jitterMeasured: jitterMeasured)
-                lines.append(line)
-            }
-        case .benchPress:
-            lines.append("Per-rep metrics (elbow 180° = straight; flare 0° = arm at the side; drift positive = head-ward):")
-            for rep in analysis.reps {
-                // nil touch pause = occlusion cut the dwell window short;
-                // omit it rather than reporting a fabricated bounce.
-                let pause = rep.touchPauseSeconds
-                    .map { String(format: "touch pause %.2f s, ", $0) } ?? ""
-                var line = String(
-                    format: "Rep %d: touch elbow %.0f°, flare %.0f°, down %.1f s, up %.1f s, %@L/R elbow diff %.0f°",
-                    rep.repNumber, rep.elbowFlexionDegrees ?? 180,
-                    rep.elbowFlareDegrees ?? 0, rep.eccentricSeconds,
-                    rep.concentricSeconds, pause,
-                    rep.asymmetryDegrees
-                )
-                if let lockout = rep.lockoutElbowDegrees {
-                    line += String(format: ", top elbow %.0f°", lockout)
-                }
-                if let drift = rep.barPathDriftRatio {
-                    line += String(format: ", path drift %+.2f×shoulder width", drift)
-                }
-                if let touch = rep.touchOffsetRatio {
-                    line += String(format: ", touch offset %+.2f×shoulder width", touch)
-                }
-                if let tilt = rep.forearmTiltDegrees {
-                    line += String(format: ", forearm tilt %.0f°", tilt)
-                }
-                if let sticking = rep.stickingHeightFraction {
-                    line += String(format: ", slowest at %.0f%% of ascent", sticking * 100)
-                }
-                if let velocity = rep.meanConcentricVelocity {
-                    line += String(format: ", MCV %.2f m/s", velocity)
-                }
-                line += trackingCaveat(rep, jitterMeasured: jitterMeasured)
-                lines.append(line)
-            }
-        case .deadlift:
-            lines.append("Per-rep metrics (spine 180° = straight line, smaller = rounding; bar gap and drift in hip widths):")
-            for rep in analysis.reps {
-                // nil dwell = occlusion cut the window short; omit it rather
-                // than reporting a fabricated bounce off the floor.
-                let dwell = rep.touchPauseSeconds
-                    .map { String(format: "floor dwell %.2f s, ", $0) } ?? ""
-                var line = String(
-                    format: "Rep %d: worst spine %.0f°, down %.1f s, up %.1f s, %@L/R knee diff %.0f°",
-                    rep.repNumber, rep.spineFlexionDegrees ?? 180,
-                    rep.eccentricSeconds, rep.concentricSeconds,
-                    dwell, rep.asymmetryDegrees
-                )
-                if let gap = rep.barGapRatio {
-                    line += String(format: ", bar gap %.2f×hip width", gap)
-                }
-                if let shoot = rep.hipShootRatio {
-                    line += String(format: ", hip/shoulder rise %.1f×", shoot)
-                }
-                if let lockout = rep.lockoutKneeDegrees {
-                    line += String(format: ", top knee %.0f°", lockout)
-                }
-                line += String(format: ", finish lean %.0f°", rep.torsoLeanDegrees)
-                if let stance = rep.stanceWidthRatio {
-                    line += String(format: ", stance %.2f×shoulder width", stance)
-                }
-                if let velocity = rep.meanConcentricVelocity {
-                    line += String(format: ", MCV %.2f m/s", velocity)
-                }
-                line += trackingCaveat(rep, jitterMeasured: jitterMeasured)
-                lines.append(line)
-            }
-        }
+        lines.append(metricConventions(analysis.kind))
         lines.append("")
         lines.append("Rules-engine findings already shown to the lifter:")
         for finding in analysis.findings {
@@ -427,6 +393,117 @@ enum CoachPrompt {
             lines.append("- [\(finding.severity.rawValue)] \(finding.title) (\(reps)): \(finding.detail)")
         }
         return lines.joined(separator: "\n")
+    }
+
+    private static func metricConventions(_ kind: ActivityType) -> String {
+        switch kind {
+        case .squat:
+            "Per-rep metrics follow, each before that rep's images (femur angle positive = hip below knee)."
+        case .benchPress:
+            "Per-rep metrics follow, each before that rep's images (elbow 180° = straight; flare 0° = arm at the side; drift positive = head-ward)."
+        case .deadlift:
+            "Per-rep metrics follow, each before that rep's images (spine 180° = straight line, smaller = rounding; bar gap and drift in hip widths)."
+        }
+    }
+
+    private static func repLine(_ rep: RepMetrics, kind: ActivityType, jitterMeasured: Bool) -> String {
+        var line: String
+        switch kind {
+        case .squat:
+            // nil femur angle = no femur tracked at the bottom; omit it
+            // rather than feeding the coach an invented number.
+            let femur = rep.hipBelowKneeDegrees
+                .map { String(format: "femur %+.0f°, ", $0) } ?? ""
+            line = String(
+                format: "Rep %d: %@torso lean %.0f°, valgus %.2f×hip width, down %.1f s, up %.1f s, L/R knee diff %.0f°",
+                rep.repNumber, femur, rep.torsoLeanDegrees,
+                rep.kneeValgusRatio, rep.eccentricSeconds, rep.concentricSeconds,
+                rep.asymmetryDegrees
+            )
+            if let stance = rep.stanceWidthRatio {
+                line += String(format: ", stance %.2f×shoulder width", stance)
+            }
+            if let shift = rep.bottomHipShiftRatio {
+                line += String(format: ", bottom pelvis drift %.2f×hip width", shift)
+            }
+            if let lockout = rep.lockoutKneeDegrees {
+                line += String(format: ", top knee %.0f°", lockout)
+            }
+            if let shin = rep.shinAngleDegrees {
+                line += String(format: ", shin %.0f°", shin)
+            }
+            if let balance = rep.balanceDriftRatio {
+                line += String(format: ", bar-over-midfoot offset %.2f×hip width", balance)
+            }
+            if let lift = rep.elbowLiftDegrees {
+                line += String(format: ", elbow lift %.0f°", lift)
+            }
+        case .benchPress:
+            // nil touch pause = occlusion cut the dwell window short;
+            // omit it rather than reporting a fabricated bounce.
+            let pause = rep.touchPauseSeconds
+                .map { String(format: "touch pause %.2f s, ", $0) } ?? ""
+            line = String(
+                format: "Rep %d: touch elbow %.0f°, flare %.0f°, down %.1f s, up %.1f s, %@L/R elbow diff %.0f°",
+                rep.repNumber, rep.elbowFlexionDegrees ?? 180,
+                rep.elbowFlareDegrees ?? 0, rep.eccentricSeconds,
+                rep.concentricSeconds, pause,
+                rep.asymmetryDegrees
+            )
+            if let lockout = rep.lockoutElbowDegrees {
+                line += String(format: ", top elbow %.0f°", lockout)
+            }
+            if let drift = rep.barPathDriftRatio {
+                line += String(format: ", path drift %+.2f×shoulder width", drift)
+            }
+            if let touch = rep.touchOffsetRatio {
+                line += String(format: ", touch offset %+.2f×shoulder width", touch)
+            }
+            if let tilt = rep.forearmTiltDegrees {
+                line += String(format: ", forearm tilt %.0f°", tilt)
+            }
+            if let sticking = rep.stickingHeightFraction {
+                line += String(format: ", slowest at %.0f%% of ascent", sticking * 100)
+            }
+        case .deadlift:
+            // nil dwell = occlusion cut the window short; omit it rather
+            // than reporting a fabricated bounce off the floor.
+            let dwell = rep.touchPauseSeconds
+                .map { String(format: "floor dwell %.2f s, ", $0) } ?? ""
+            line = String(
+                format: "Rep %d: worst spine %.0f°, down %.1f s, up %.1f s, %@L/R knee diff %.0f°",
+                rep.repNumber, rep.spineFlexionDegrees ?? 180,
+                rep.eccentricSeconds, rep.concentricSeconds,
+                dwell, rep.asymmetryDegrees
+            )
+            if let gap = rep.barGapRatio {
+                line += String(format: ", bar gap %.2f×hip width", gap)
+            }
+            if let shoot = rep.hipShootRatio {
+                line += String(format: ", hip/shoulder rise %.1f×", shoot)
+            }
+            if let lockout = rep.lockoutKneeDegrees {
+                line += String(format: ", top knee %.0f°", lockout)
+            }
+            line += String(format: ", finish lean %.0f°", rep.torsoLeanDegrees)
+            if let stance = rep.stanceWidthRatio {
+                line += String(format: ", stance %.2f×shoulder width", stance)
+            }
+        }
+        if let velocity = rep.meanConcentricVelocity {
+            line += String(format: ", MCV %.2f m/s", velocity)
+        }
+        // The quality signal behind the verification mission: measured
+        // per-rep bone-length jitter against the gate that would have
+        // suppressed the rep.
+        if let jitter = rep.trackingJitter {
+            line += String(
+                format: ", tracking jitter %.4f (gate %.2f)",
+                jitter, AnalysisTuning.repTrackingJitterGateRatio
+            )
+        }
+        line += trackingCaveat(rep, jitterMeasured: jitterMeasured)
+        return line
     }
 
     /// JSON schema for `output_config.format` — must mirror `CoachReport`.
@@ -449,6 +526,22 @@ enum CoachPrompt {
             "required": ["severity", "title", "detail", "rep_numbers", "confidence", "topic"],
             "additionalProperties": false,
         ]
+        // One verdict per overlay-carrying rep; empty when no rep had an
+        // overlay image. Mirrored by CoachReport.TrackingVerdict.
+        let verdictSchema: [String: Any] = [
+            "type": "object",
+            "properties": [
+                "rep_number": ["type": "integer"],
+                "verdict": ["type": "string", "enum": ["matches", "minor_drift", "mismatch"]],
+                "joints": [
+                    "type": "array",
+                    "items": ["type": "string", "enum": BodyJoint.allCases.map(\.rawValue)],
+                ],
+                "note": ["type": "string"],
+            ],
+            "required": ["rep_number", "verdict", "joints", "note"],
+            "additionalProperties": false,
+        ]
         return [
             "type": "object",
             "properties": [
@@ -466,8 +559,9 @@ enum CoachPrompt {
                 ],
                 "findings": ["type": "array", "items": findingSchema],
                 "positives": ["type": "array", "items": ["type": "string"]],
+                "tracking_verification": ["type": "array", "items": verdictSchema],
             ],
-            "required": ["summary", "priority_fix", "findings", "positives"],
+            "required": ["summary", "priority_fix", "findings", "positives", "tracking_verification"],
             "additionalProperties": false,
         ]
     }

@@ -101,16 +101,6 @@ struct HomeView: View {
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarLeading) {
-                    KodoEmblem(size: 36)
-                }
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button {
-                        path.append(Route.bodyScanGuide)
-                    } label: {
-                        Label("Body scan", systemImage: "person.and.background.dotted")
-                    }
-                }
-                ToolbarItem(placement: .topBarTrailing) {
                     accountMenu
                 }
             }
@@ -184,8 +174,15 @@ struct HomeView: View {
         }
     }
 
+    /// The emblem doubles as a menu: body scan plus the account actions —
+    /// the logo is the only toolbar affordance.
     private var accountMenu: some View {
         Menu {
+            Button {
+                path.append(Route.bodyScanGuide)
+            } label: {
+                Label("Body scan", systemImage: "person.and.background.dotted")
+            }
             switch auth.state {
             case let .loggedIn(email):
                 Section(email) {
@@ -199,7 +196,7 @@ struct HomeView: View {
                 Button("Log out", role: .destructive) { auth.logout() }
             }
         } label: {
-            Label("Account", systemImage: "person.crop.circle")
+            KodoEmblem(size: 36)
         }
     }
 

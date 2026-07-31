@@ -75,3 +75,54 @@ struct CoachReport: Codable, Sendable {
         case trackingVerification = "tracking_verification"
     }
 }
+
+extension CoachReport {
+    /// True when a prose field carries serialized-JSON residue. The model
+    /// occasionally glitches and nests the real report inside a string
+    /// field (observed: `priority_fix.why` held `<prose>","title":"…"},`
+    /// followed by the rest of the report JSON, wrapped in a placeholder
+    /// envelope). The envelope decodes fine against the schema, so it can
+    /// only be caught semantically.
+    var hasJSONResidue: Bool {
+        let prose = [summary, priorityFix.title, priorityFix.cue, priorityFix.why]
+            + findings.flatMap { [$0.title, $0.detail] }
+            + positives
+        return prose.contains {
+            $0.contains("\":\"") || $0.contains("\":[") || $0.contains("\"},\"")
+        }
+    }
+
+    /// The report with a nested-JSON glitch repaired, self when clean, or
+    /// nil when the residue can't be recovered into a clean report (the
+    /// caller then treats the response as unreadable).
+    func sanitized() -> CoachReport? {
+        guard hasJSONResidue else { return self }
+        return recoveringNestedReport()
+    }
+
+    private func recoveringNestedReport() -> CoachReport? {
+        // Whole report serialized into `why`, head included.
+        if let data = priorityFix.why.data(using: .utf8),
+           let direct = try? JSONDecoder().decode(CoachReport.self, from: data),
+           !direct.hasJSONResidue {
+            return direct
+        }
+        // Observed shape: `why` starts mid-report — `<why prose>","title":"…"},`
+        // then the remaining top-level fields. Re-head it into a full object.
+        guard priorityFix.why.contains("\"summary\":\""),
+              let data = "{\"priority_fix\":{\"cue\":\"\",\"topic\":\"none\",\"why\":\""
+                  .appending(priorityFix.why).data(using: .utf8),
+              var inner = try? JSONDecoder().decode(CoachReport.self, from: data),
+              !inner.hasJSONResidue
+        else { return nil }
+        // The envelope carried the real cue and topic; the inner object
+        // lost them to the glitch.
+        if inner.priorityFix.cue.isEmpty {
+            inner.priorityFix.cue = priorityFix.title
+        }
+        if inner.priorityFix.topic == nil || inner.priorityFix.topic == "none" {
+            inner.priorityFix.topic = priorityFix.topic
+        }
+        return inner
+    }
+}

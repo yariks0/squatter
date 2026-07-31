@@ -12,8 +12,19 @@ enum CoachReportStore {
     }
 
     static func load(for videoURL: URL) -> CoachReport? {
-        guard let data = try? Data(contentsOf: url(for: videoURL)) else { return nil }
-        return try? JSONDecoder().decode(CoachReport.self, from: data)
+        guard let data = try? Data(contentsOf: url(for: videoURL)),
+              let report = try? JSONDecoder().decode(CoachReport.self, from: data)
+        else { return nil }
+        guard let sane = report.sanitized() else {
+            // Unrecoverable glitch report — drop it so the section offers
+            // to generate again instead of rendering raw JSON.
+            delete(for: videoURL)
+            return nil
+        }
+        if report.hasJSONResidue {
+            save(sane, for: videoURL)
+        }
+        return sane
     }
 
     static func save(_ report: CoachReport, for videoURL: URL) {

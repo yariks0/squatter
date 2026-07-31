@@ -282,6 +282,9 @@ enum CoachPrompt {
         - topic: tag the priority fix and every finding with the closest \
         topic from [\(topics)] — the app shows a matching form diagram next \
         to it. Use "none" only when nothing fits.
+        - Every string value is plain prose: never serialize or nest JSON \
+        inside a string, and never emit placeholder text — every field \
+        carries real content from this set.
         """
     }
 

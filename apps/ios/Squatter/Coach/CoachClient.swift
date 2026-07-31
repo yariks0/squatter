@@ -76,7 +76,9 @@ enum CoachClient {
         guard let text = content.first(where: { $0["type"] as? String == "text" })?["text"] as? String,
               let json = text.data(using: .utf8)
         else { throw CoachError.badResponse }
-        return try JSONDecoder().decode(CoachReport.self, from: json)
+        let report = try JSONDecoder().decode(CoachReport.self, from: json)
+        guard let sane = report.sanitized() else { throw CoachError.badResponse }
+        return sane
     }
 
     private static func errorMessage(from data: Data) -> String? {

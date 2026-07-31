@@ -157,4 +157,58 @@ struct CoachPromptTests {
         #expect(verdict?.verdict == "mismatch")
         #expect(verdict?.joints == ["leftKnee", "leftAnkle"])
     }
+
+    @Test func cleanReportHasNoResidue() throws {
+        let sample = """
+        {"summary":"Solid set.","priority_fix":{"title":"Brace harder","cue":"Big air, push out","why":"Lean grows late in the set."},"findings":[],"positives":["Depth"]}
+        """
+        let report = try JSONDecoder().decode(CoachReport.self, from: Data(sample.utf8))
+        #expect(!report.hasJSONResidue)
+        #expect(report.sanitized() != nil)
+    }
+
+    /// The glitch seen in the field: a placeholder envelope whose
+    /// `priority_fix.why` starts with real prose, then continues as the
+    /// serialized remainder of the actual report. The client must recover
+    /// the nested report instead of rendering raw JSON.
+    @Test func coachReportRecoversNestedReport() throws {
+        let sample = """
+        {"summary":"placeholder","priority_fix":{"title":"Sit your hips down until your hip crease drops below the knee","cue":"","topic":"squat_depth","why":"You already hold a near-vertical torso; ride it down.\\",\\"title\\":\\"Sit fully to depth\\"},\\"summary\\":\\"Upright torso and clean pattern; depth is the one habit costing the set.\\",\\"findings\\":[{\\"severity\\":\\"warning\\",\\"title\\":\\"Consistently stopping above parallel\\",\\"detail\\":\\"Femur sat at -11° on the tracked reps.\\",\\"rep_numbers\\":[1,2],\\"confidence\\":\\"high\\",\\"topic\\":\\"squat_depth\\"}],\\"positives\\":[\\"Torso stays tall\\"],\\"tracking_verification\\":[{\\"rep_number\\":1,\\"verdict\\":\\"matches\\",\\"joints\\":[],\\"note\\":\\"Clean.\\"}]}"},"findings":[],"positives":[],"tracking_verification":[]}
+        """
+        let report = try JSONDecoder().decode(CoachReport.self, from: Data(sample.utf8))
+        #expect(report.hasJSONResidue)
+        let recovered = try #require(report.sanitized())
+        #expect(!recovered.hasJSONResidue)
+        #expect(recovered.summary.hasPrefix("Upright torso"))
+        #expect(recovered.priorityFix.title == "Sit fully to depth")
+        #expect(recovered.priorityFix.cue == "Sit your hips down until your hip crease drops below the knee")
+        #expect(recovered.priorityFix.why == "You already hold a near-vertical torso; ride it down.")
+        #expect(recovered.priorityFix.topic == "squat_depth")
+        #expect(recovered.findings.count == 1)
+        #expect(recovered.findings.first?.repNumbers == [1, 2])
+        #expect(recovered.positives == ["Torso stays tall"])
+        #expect(recovered.trackingVerification?.count == 1)
+    }
+
+    /// Whole-report-inside-`why`, head included: recovered directly.
+    @Test func coachReportRecoversFullySerializedReport() throws {
+        let sample = """
+        {"summary":"placeholder","priority_fix":{"title":"t","cue":"c","why":"{\\"summary\\":\\"Real summary.\\",\\"priority_fix\\":{\\"title\\":\\"Real title\\",\\"cue\\":\\"Real cue\\",\\"why\\":\\"Real why.\\",\\"topic\\":\\"none\\"},\\"findings\\":[],\\"positives\\":[],\\"tracking_verification\\":[]}"},"findings":[],"positives":[],"tracking_verification":[]}
+        """
+        let report = try JSONDecoder().decode(CoachReport.self, from: Data(sample.utf8))
+        let recovered = try #require(report.sanitized())
+        #expect(recovered.summary == "Real summary.")
+        #expect(recovered.priorityFix.cue == "Real cue")
+    }
+
+    /// Residue that can't be rebuilt into a clean report is rejected, so
+    /// the UI offers a retry instead of rendering garbage.
+    @Test func unrecoverableResidueIsRejected() throws {
+        let sample = """
+        {"summary":"placeholder","priority_fix":{"title":"t","cue":"","why":"Prose.\\",\\"summary\\":\\"unbalanced"},"findings":[],"positives":[]}
+        """
+        let report = try JSONDecoder().decode(CoachReport.self, from: Data(sample.utf8))
+        #expect(report.hasJSONResidue)
+        #expect(report.sanitized() == nil)
+    }
 }

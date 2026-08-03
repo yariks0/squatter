@@ -36,9 +36,13 @@ UI (HomeView routes)
  │        App/ — so leaving the app doesn't stall it: beginBackgroundTask
  │        always, plus an iOS 26 BGContinuedProcessingTask with system
  │        progress UI fed from extraction progress; wildcard identifier
- │        com.yarik.squatter.analysis.* in both Info plists. PoseExtractor
- │        gets a readerStallRecovery hook that parks until foreground when
- │        the decoder dies in the background — Analysis stays UIKit-free):
+ │        com.yarik.squatter.analysis.* in both Info plists. Its BGTask
+ │        launch + expiration handlers MUST be @Sendable: formed inside the
+ │        @MainActor class they'd inherit its isolation, and the scheduler
+ │        calls them off-main — Swift 6's prologue check then SIGTRAPs before
+ │        the body runs. PoseExtractor gets a readerStallRecovery hook that
+ │        parks until foreground when the decoder dies in the background —
+ │        Analysis stays UIKit-free):
  │          PoseExtractor.extract(video, depthSidecar) ──▶ JointSeries
  │          SquatAnalyzer.analyze(series, activity, profile: BodyGeometryProfileStore.load())
  │          └─▶ SquatAnalysis ──▶ ReportView / saved as WorkoutSession (SwiftData)

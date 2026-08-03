@@ -81,14 +81,21 @@ final class BackgroundAnalysisActivity {
         // continued processing tasks; the handler fires once the scheduler
         // starts the (already running) work and hands us the task to feed
         // progress into.
+        // `using: nil` runs this handler on the scheduler's own serial queue,
+        // never the main actor. The closure is formed inside a @MainActor
+        // method, so without an explicit @Sendable it inherits main-actor
+        // isolation and Swift 6's isolation prologue trips
+        // dispatch_assert_queue — SIGTRAP before the body runs, killing every
+        // analysis on device (2026-08-03). Stay non-isolated, hop explicitly.
         let registered = BGTaskScheduler.shared.register(
             forTaskWithIdentifier: identifier, using: nil
-        ) { [weak self] task in
-            guard let task = task as? BGContinuedProcessingTask else {
+        ) { @Sendable [weak self] task in
+            guard let continued = task as? BGContinuedProcessingTask else {
                 task.setTaskCompleted(success: false)
                 return
             }
-            Task { @MainActor in self?.adopt(task) }
+            nonisolated(unsafe) let adopted = continued
+            Task { @MainActor in self?.adopt(adopted) }
         }
         guard registered else { return }
         let request = BGContinuedProcessingTaskRequest(
@@ -114,7 +121,10 @@ final class BackgroundAnalysisActivity {
         }
         task.progress.totalUnitCount = 100
         task.progress.completedUnitCount = Int64((lastFraction * 100).rounded())
-        task.expirationHandler = { [weak self] in
+        // Same isolation trap as the launch handler above: the system fires
+        // expiration off the main actor, so this closure must not inherit
+        // `adopt`'s main-actor isolation.
+        task.expirationHandler = { @Sendable [weak self] in
             Task { @MainActor in
                 guard let self, !self.finished,
                       let expired = self.continuedTask as? BGContinuedProcessingTask

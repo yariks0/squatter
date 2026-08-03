@@ -111,7 +111,57 @@ struct CoachSectionView: View {
                 }
             }
 
+            correctiveWork(report)
+
             trackingCheck(report)
+        }
+    }
+
+    /// Drills the coach prescribed because a fault traces to a physical
+    /// limitation rather than attention. Silent when the set needs none —
+    /// an empty array is the expected result for clean work.
+    @ViewBuilder
+    private func correctiveWork(_ report: CoachReport) -> some View {
+        let drills = report.correctiveWork ?? []
+        if !drills.isEmpty {
+            VStack(alignment: .leading, spacing: 8) {
+                Label("Work on between sessions", systemImage: "figure.cooldown")
+                    .font(.subheadline.bold())
+                ForEach(drills) { drill in
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack(spacing: 6) {
+                            Text(drill.kind.capitalized)
+                                .font(.caption2.bold())
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(
+                                    (drill.isMobility ? Color.teal : Color.purple).opacity(0.18),
+                                    in: Capsule()
+                                )
+                            Text(drill.name)
+                                .font(.subheadline.bold())
+                        }
+                        Text(drill.dosage)
+                            .font(.caption)
+                        Text("\(drill.target) — \(drill.why)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        Text("Fixes: \(drill.addresses)")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        if let topic = drill.hintTopic {
+                            ExerciseHintView(topic: topic)
+                                .padding(.top, 4)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+            }
+            .padding(12)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(.green.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
         }
     }
 

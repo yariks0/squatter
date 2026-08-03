@@ -231,9 +231,11 @@ enum CoachPrompt {
     /// that keep coaching explicit and concise.
     private static var responseGuidelines: String {
         let topics = FormHintTopic.allCases.map(\.rawValue).joined(separator: ", ")
+        let drills = ExerciseHintTopic.allCases.map(\.rawValue).joined(separator: ", ")
         return """
-        You have two missions: coach the set, and verify the tracking that \
-        measured it.
+        You have three missions: coach the set, verify the tracking that \
+        measured it, and prescribe corrective work when a fault needs more \
+        than a cue.
 
         Mission 1 — coaching. Grounding rules: every claim must name the \
         rep(s) it applies to and be supported by either a metric or \
@@ -261,11 +263,36 @@ enum CoachPrompt {
         overlay joints were already flagged uncertain by the pipeline — \
         still verify them, but weigh their drift less harshly.
 
+        Mission 3 — corrective work. Some faults are not attention errors: \
+        the lifter cannot reach the position, or cannot hold it under load. \
+        For those, and only those, prescribe off-the-bar drills in \
+        corrective_work. Decide which kind from the evidence:
+        - "mobility" when the lifter cannot reach the position at all. The \
+        strongest evidence is the unloaded deep-hold reference in the set \
+        header when present: a loaded depth that falls well short of the \
+        lifter's own unloaded hold is not a mobility limit — they already \
+        own that range — while a shallow unloaded hold means the range \
+        itself is missing. Restriction that tracks one side only, or a \
+        position that degrades as load rises after starting fine, is also \
+        not mobility.
+        - "strength" when the position is reachable but collapses under \
+        load: it holds early in the set and degrades as reps accumulate, or \
+        holds unloaded but not loaded. Name the capacity that gave out.
+        Rules: at most three drills, ordered by how much they unlock; each \
+        must trace to a fault you actually found in this set (name it in \
+        "addresses"); no drill for a fault a cue fixes; prefer equipment the \
+        lifter demonstrably has. Return an empty array when nothing is \
+        warranted — that is the common case for a clean set, and padding it \
+        with generic drills makes the whole report cheap.
+
         Coach, don't judge: open the summary with what the lifter did well, \
         name the root physical cause behind each fault (not just the \
         symptom), and give the biomechanical why behind every cue so the fix \
-        sticks. Never give dietary, supplement, or medical/rehabilitation \
-        advice — technique and load management only.
+        sticks. Never give dietary, supplement, or medical advice, and never \
+        prescribe rehabilitation: corrective work is training for healthy \
+        tissue only. If a limitation reads as pain or injury rather than \
+        mobility or strength, say so and say to see a professional instead \
+        of prescribing around it.
 
         Output style — every suggestion explicit and concise, no hedging, no \
         filler, no jargon without a plain-language gloss:
@@ -279,6 +306,17 @@ enum CoachPrompt {
         the fix as a concrete action.
         - Findings that share a root cause are merged into one, not repeated.
         - positives: at most three, each under eight words.
+        - corrective_work: name is the drill alone (no dosage in it); target \
+        is the capacity in two or three words ("ankle dorsiflexion", \
+        "upper-back strength"); addresses names the fault and the reps it \
+        showed on; dosage is concrete and repeatable ("3 × 45 s per side, \
+        daily"); why is one sentence tying the limitation to the fault.
+        - drill: tag each corrective with the closest match from \
+        [\(drills)] — the app plays a matching animation of that movement. \
+        Strongly prefer prescribing a drill that has a tag, and when you do, \
+        make "name" that same movement so the animation matches the text. \
+        Use "none" only when the lifter genuinely needs something outside \
+        that list.
         - topic: tag the priority fix and every finding with the closest \
         topic from [\(topics)] — the app shows a matching form diagram next \
         to it. Use "none" only when nothing fits.
@@ -385,6 +423,20 @@ enum CoachPrompt {
             : "Capture: video only (skeleton scale estimated).")
         if let height = analysis.bodyHeight {
             lines.append(String(format: "Estimated body height: %.2f m.", height))
+        }
+        // The mobility-vs-strength discriminator for corrective work: the
+        // lifter's own unloaded full-depth hold from the body scan. Only the
+        // scan flow measures it (a session's loaded bottoms are the thing
+        // being judged), so it is absent for unscanned lifters.
+        if let unloaded = analysis.metricGeometry?.deepestHipBelowKneeDegrees {
+            lines.append(String(
+                format: """
+                Unloaded mobility reference (body scan, bodyweight): deepest \
+                hip-below-knee %.0f°. This is range the lifter demonstrably \
+                owns — a loaded bottom short of it is not a mobility limit.
+                """,
+                unloaded
+            ))
         }
         lines.append("")
         lines.append(metricConventions(analysis.kind))
@@ -545,6 +597,25 @@ enum CoachPrompt {
             "required": ["rep_number", "verdict", "joints", "note"],
             "additionalProperties": false,
         ]
+        // Off-the-bar drills; empty when a cue alone fixes every fault.
+        // Mirrored by CoachReport.CorrectiveExercise.
+        let correctiveSchema: [String: Any] = [
+            "type": "object",
+            "properties": [
+                "kind": ["type": "string", "enum": ["mobility", "strength"]],
+                "name": ["type": "string"],
+                "target": ["type": "string"],
+                "addresses": ["type": "string"],
+                "dosage": ["type": "string"],
+                "why": ["type": "string"],
+                "drill": [
+                    "type": "string",
+                    "enum": ExerciseHintTopic.allCases.map(\.rawValue) + ["none"],
+                ],
+            ],
+            "required": ["kind", "name", "target", "addresses", "dosage", "why", "drill"],
+            "additionalProperties": false,
+        ]
         return [
             "type": "object",
             "properties": [
@@ -563,8 +634,12 @@ enum CoachPrompt {
                 "findings": ["type": "array", "items": findingSchema],
                 "positives": ["type": "array", "items": ["type": "string"]],
                 "tracking_verification": ["type": "array", "items": verdictSchema],
+                "corrective_work": ["type": "array", "items": correctiveSchema],
             ],
-            "required": ["summary", "priority_fix", "findings", "positives", "tracking_verification"],
+            "required": [
+                "summary", "priority_fix", "findings", "positives",
+                "tracking_verification", "corrective_work",
+            ],
             "additionalProperties": false,
         ]
     }

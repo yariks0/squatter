@@ -65,9 +65,13 @@ checks" → `xcrun simctl shutdown all` and retry.
   `KeyframeExtractor` (phase JPEGs at the generator's actualTime, tier-1
   phases as raw + `SkeletonRenderer`-composited overlay pairs); `CoachPrompt`
   embeds live thresholds, interleaves each rep's metrics with its labeled
-  images, and runs two missions — coaching plus skeleton-vs-footage
+  images, and runs three missions — coaching, skeleton-vs-footage
   verification (`tracking_verification` verdicts; a mismatch is the one case
-  where images outrank metrics); `CoachReport` mirrors
+  where images outrank metrics), and corrective work (`corrective_work`:
+  ≤3 mobility/strength drills when a cue can't fix a fault, mobility vs
+  strength judged off the body scan's unloaded deep hold; each tagged with
+  an `ExerciseHintTopic` the app animates via `ExerciseHintView`);
+  `CoachReport` mirrors
   `CoachPrompt.outputSchema` — keep in sync (new report fields optional: old
   `.coach` caches must decode). Report cached as `.coach` beside the video.
   `CoachClient` POSTs the Anthropic body to the backend `/v1/coach` proxy

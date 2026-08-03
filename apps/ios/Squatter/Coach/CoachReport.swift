@@ -60,6 +60,34 @@ struct CoachReport: Codable, Sendable {
         }
     }
 
+    /// An off-the-bar drill prescribed because a fault traces back to a
+    /// physical limitation a cue alone can't fix.
+    struct CorrectiveExercise: Codable, Sendable, Identifiable {
+        var id: String { name }
+        /// "mobility" | "strength" — which limitation this addresses.
+        var kind: String
+        /// The drill itself, e.g. "Goblet squat hold".
+        var name: String
+        /// The capacity being trained, e.g. "ankle dorsiflexion".
+        var target: String
+        /// The fault it unlocks, in the lifter's own set.
+        var addresses: String
+        /// Prescription: sets × reps or hold time, and frequency.
+        var dosage: String
+        /// One sentence: limitation → fault.
+        var why: String
+        /// Raw drill tag selecting the animated demo ("none" when the
+        /// prescribed drill isn't one the app can draw); optional so
+        /// reports saved before the animations decode.
+        var drill: String?
+
+        var isMobility: Bool { kind == "mobility" }
+
+        var hintTopic: ExerciseHintTopic? {
+            drill.flatMap(ExerciseHintTopic.init(rawValue:))
+        }
+    }
+
     /// Two-to-three sentence overall read of the set.
     var summary: String
     var priorityFix: PriorityFix
@@ -68,11 +96,15 @@ struct CoachReport: Codable, Sendable {
     var positives: [String]
     /// Optional so cached reports from before the verification mission decode.
     var trackingVerification: [TrackingVerdict]?
+    /// Empty when every fault is a cue away from fixed. Optional so cached
+    /// reports from before corrective work existed decode.
+    var correctiveWork: [CorrectiveExercise]?
 
     enum CodingKeys: String, CodingKey {
         case summary, findings, positives
         case priorityFix = "priority_fix"
         case trackingVerification = "tracking_verification"
+        case correctiveWork = "corrective_work"
     }
 }
 
@@ -86,6 +118,7 @@ extension CoachReport {
     var hasJSONResidue: Bool {
         let prose = [summary, priorityFix.title, priorityFix.cue, priorityFix.why]
             + findings.flatMap { [$0.title, $0.detail] }
+            + (correctiveWork ?? []).flatMap { [$0.name, $0.addresses, $0.dosage, $0.why] }
             + positives
         return prose.contains {
             $0.contains("\":\"") || $0.contains("\":[") || $0.contains("\"},\"")

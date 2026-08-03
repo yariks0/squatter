@@ -134,6 +134,60 @@ struct CoachPromptTests {
         #expect(properties?["tracking_verification"] != nil)
     }
 
+    @Test func outputSchemaRequiresCorrectiveWork() {
+        let schema = CoachPrompt.outputSchema
+        #expect((schema["required"] as? [String])?.contains("corrective_work") == true)
+        let properties = schema["properties"] as? [String: Any]
+        let corrective = properties?["corrective_work"] as? [String: Any]
+        let item = corrective?["items"] as? [String: Any]
+        let itemRequired = item?["required"] as? [String]
+        #expect(itemRequired?.sorted() == ["addresses", "dosage", "drill", "kind", "name", "target", "why"])
+        // The drill tag must offer exactly the animations the app can draw,
+        // plus the opt-out — a tag the app can't render draws nothing.
+        let itemProperties = item?["properties"] as? [String: Any]
+        let drill = itemProperties?["drill"] as? [String: Any]
+        #expect((drill?["enum"] as? [String])?.sorted()
+            == (ExerciseHintTopic.allCases.map(\.rawValue) + ["none"]).sorted())
+    }
+
+    /// The mobility-vs-strength discriminator: without the scan reference
+    /// the model can't tell "can't reach depth" from "can't hold it".
+    @Test func setHeaderCarriesUnloadedMobilityReference() {
+        var geometry = MetricBodyGeometry(femurMeters: 0.42, shinMeters: 0.40, quality: 0.03)
+        geometry.deepestHipBelowKneeDegrees = 28
+        var analysis = SquatAnalysis(
+            reps: [], findings: [], score: 80, usedDepth: true, bodyHeight: 1.8,
+            series: JointSeries(frames: [], bodyHeight: 1.8, usedDepth: true)
+        )
+        analysis.metricGeometry = geometry
+        let header = CoachPrompt.userContent(analysis: analysis, keyframes: [])
+            .compactMap { $0["text"] as? String }.joined(separator: "\n")
+        #expect(header.contains("Unloaded mobility reference"))
+        #expect(header.contains("28°"))
+    }
+
+    @Test func coachReportDecodesCorrectiveWork() throws {
+        let sample = """
+        {"summary":"s","priority_fix":{"title":"t","cue":"c","why":"w"},"findings":[],"positives":[],"corrective_work":[{"kind":"mobility","name":"Knee-to-wall ankle rock","target":"ankle dorsiflexion","addresses":"Shallow depth on reps 3-5","dosage":"3 x 45 s per side, daily","why":"Limited dorsiflexion stops the knee travelling forward.","drill":"ankleRock"}]}
+        """
+        let report = try JSONDecoder().decode(CoachReport.self, from: Data(sample.utf8))
+        let drill = report.correctiveWork?.first
+        #expect(drill?.isMobility == true)
+        #expect(drill?.target == "ankle dorsiflexion")
+        #expect(drill?.hintTopic == .ankleRock)
+        #expect(!report.hasJSONResidue)
+    }
+
+    /// "none" and unknown tags must degrade to no animation, never crash.
+    @Test func unknownDrillTagRendersNoAnimation() throws {
+        let sample = """
+        {"summary":"s","priority_fix":{"title":"t","cue":"c","why":"w"},"findings":[],"positives":[],"corrective_work":[{"kind":"strength","name":"Zercher carry","target":"trunk strength","addresses":"Lean on rep 4","dosage":"3 x 30 m","why":"Trunk gives out late.","drill":"none"}]}
+        """
+        let report = try JSONDecoder().decode(CoachReport.self, from: Data(sample.utf8))
+        #expect(report.correctiveWork?.first?.hintTopic == nil)
+        #expect(report.correctiveWork?.first?.isMobility == false)
+    }
+
     /// Old cached `.coach` files predate the verification field and must
     /// still decode (optional-fields law).
     @Test func coachReportDecodesSchemaShapedJSON() throws {
@@ -145,6 +199,7 @@ struct CoachPromptTests {
         #expect(report.findings.first?.repNumbers == [1, 3])
         #expect(report.priorityFix.title == "Brace harder")
         #expect(report.trackingVerification == nil)
+        #expect(report.correctiveWork == nil)
     }
 
     @Test func coachReportDecodesTrackingVerification() throws {

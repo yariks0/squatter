@@ -294,7 +294,23 @@ last, and worst-jitter reps. `KeyframeExtractor` extracts at the generator's
 otherwise) and composites overlays via `SkeletonRenderer` — the same
 classification the playback overlay draws (uncertain beats fault).
 
-The system prompt runs **two missions**: coaching (trust metrics over pixels
+**Mission 3 — corrective work.** When a fault traces to a physical
+limitation rather than attention, the model prescribes off-the-bar drills in
+`corrective_work` (≤3, empty for a clean set). Mobility vs strength is
+decided from evidence, chiefly the body scan's unloaded deep-hold
+(`MetricBodyGeometry.deepestHipBelowKneeDegrees`) which `setHeader` emits as
+the "Unloaded mobility reference" line: range the lifter already owns means
+a short loaded bottom is a strength problem, not a mobility one. Each drill
+carries a `drill` tag from `ExerciseHintTopic` (or "none"), and
+`CoachSectionView` plays the matching looping `ExerciseHintView` animation —
+same unit-space `Canvas` idiom as `FormHintView`, driven by
+`TimelineView(.animation)`, static end-pose under Reduce Motion. Adding a
+drill means adding both the enum case and its `draw` branch; the schema enum
+is generated from `allCases`, so the model can only ever tag what the app
+can draw. The medical guardrail stands: training for healthy tissue only,
+never rehabilitation.
+
+The system prompt runs **two further missions**: coaching (trust metrics over pixels
 *for verified reps*) and tracking verification — compare the drawn skeleton
 against the visible body per overlay rep and emit `tracking_verification`
 verdicts (`matches` / `minor_drift` / `mismatch` + joints + note) in the

@@ -266,4 +266,39 @@ struct CoachPromptTests {
         #expect(report.hasJSONResidue)
         #expect(report.sanitized() == nil)
     }
+
+    /// Byte-for-byte the reply pulled off the device on 2026-08-04: the model
+    /// spent ~6.9k output tokens thinking and then filled every field with
+    /// nothing. It satisfies the output schema, so only a semantic check
+    /// catches it — without one the review screen cached it and drew a blank
+    /// card that looked like a finished assessment.
+    @Test func emptyShellIsRejected() throws {
+        let sample = """
+        {"positives":[],"priority_fix":{"why":"","topic":"none","cue":"","title":""},"findings":[],"summary":"","tracking_verification":[],"corrective_work":[]}
+        """
+        let report = try JSONDecoder().decode(CoachReport.self, from: Data(sample.utf8))
+        #expect(report.isEmptyShell)
+        #expect(report.sanitized() == nil)
+    }
+
+    /// Whitespace-only prose is the same failure wearing a hat.
+    @Test func blankProseCountsAsEmptyShell() throws {
+        let sample = """
+        {"summary":"  ","priority_fix":{"title":"\\n","cue":" ","why":""},"findings":[],"positives":[]}
+        """
+        let report = try JSONDecoder().decode(CoachReport.self, from: Data(sample.utf8))
+        #expect(report.isEmptyShell)
+    }
+
+    /// The emptiness check must not swallow a genuinely clean lift: no
+    /// findings is a legitimate verdict, and that report still carries a
+    /// summary and a cue.
+    @Test func cleanSetWithNoFindingsSurvives() throws {
+        let sample = """
+        {"summary":"Textbook set — depth and bar path both hold.","priority_fix":{"title":"Keep the tempo","cue":"Two seconds down","why":"Control is what is holding this together."},"findings":[],"positives":[]}
+        """
+        let report = try JSONDecoder().decode(CoachReport.self, from: Data(sample.utf8))
+        #expect(!report.isEmptyShell)
+        #expect(report.sanitized() != nil)
+    }
 }

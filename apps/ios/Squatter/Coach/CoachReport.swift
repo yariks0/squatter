@@ -125,10 +125,29 @@ extension CoachReport {
         }
     }
 
+    /// True when the model returned the schema's shape with nothing in it —
+    /// every required key present, every value blank. The output schema can't
+    /// catch this (the shape *is* valid), so like `hasJSONResidue` it can only
+    /// be caught semantically. Observed on prod 2026-08-04: ~6.9k output
+    /// tokens of thinking followed by a 152-byte all-empty report, which the
+    /// review screen then rendered as a blank card.
+    ///
+    /// Deliberately strict: a real set can legitimately have no findings (a
+    /// clean lift) or no positives, so emptiness only counts when the prose
+    /// the model must always write — the summary and the priority cue — is
+    /// missing too.
+    var isEmptyShell: Bool {
+        let prose = [summary, priorityFix.title, priorityFix.cue, priorityFix.why]
+        return prose.allSatisfy { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+            && findings.isEmpty && positives.isEmpty
+    }
+
     /// The report with a nested-JSON glitch repaired, self when clean, or
-    /// nil when the residue can't be recovered into a clean report (the
-    /// caller then treats the response as unreadable).
+    /// nil when it can't be recovered into a clean report — either because
+    /// the residue is unrecoverable or because the model returned an empty
+    /// shell. The caller then treats the response as unreadable.
     func sanitized() -> CoachReport? {
+        guard !isEmptyShell else { return nil }
         guard hasJSONResidue else { return self }
         return recoveringNestedReport()
     }

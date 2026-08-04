@@ -16,8 +16,10 @@ enum CoachReportStore {
               let report = try? JSONDecoder().decode(CoachReport.self, from: data)
         else { return nil }
         guard let sane = report.sanitized() else {
-            // Unrecoverable glitch report — drop it so the section offers
-            // to generate again instead of rendering raw JSON.
+            // Unrecoverable glitch report, or the all-empty shell the model
+            // sometimes returns — drop it so the section offers to generate
+            // again instead of rendering raw JSON or a blank card. This also
+            // evicts such reports cached by earlier builds.
             delete(for: videoURL)
             return nil
         }

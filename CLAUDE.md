@@ -73,7 +73,13 @@ checks" → `xcrun simctl shutdown all` and retry.
   an `ExerciseHintTopic` the app animates via `ExerciseHintView`);
   `CoachReport` mirrors
   `CoachPrompt.outputSchema` — keep in sync (new report fields optional: old
-  `.coach` caches must decode). Report cached as `.coach` beside the video.
+  `.coach` caches must decode). **A schema-valid reply can still be junk**, so
+  `sanitized()` is the semantic gate and rejects two shapes: JSON residue
+  nested in a prose field, and the all-empty shell (every field blank —
+  observed on prod with ~6.9k output tokens of thinking behind it). Both
+  return nil, which drops the cache and offers a regenerate rather than
+  rendering a blank card. The proxy logs `text_bytes` per reply so empties are
+  visible server-side without pulling `.coach` off the device. Report cached as `.coach` beside the video.
   `CoachClient` POSTs the Anthropic body to the backend `/v1/coach` proxy
   with the session bearer — the Anthropic key lives server-side now, not in
   the app. Proxy cap bumps (max_tokens etc.) deploy server-first. See

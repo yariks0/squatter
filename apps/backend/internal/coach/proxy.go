@@ -109,17 +109,17 @@ func validateImages(messages []any, limits Limits) error {
 func Forward(
 	ctx context.Context, client *http.Client, url, apiKey string,
 	body []byte, w http.ResponseWriter,
-) (int, *int, *int, error) {
+) (Result, error) {
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 	if err != nil {
-		return 0, nil, nil, err
+		return Result{}, err
 	}
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("x-api-key", apiKey)
 	request.Header.Set("anthropic-version", "2023-06-01")
 	response, err := client.Do(request)
 	if err != nil {
-		return 0, nil, nil, err
+		return Result{}, err
 	}
 	defer response.Body.Close()
 
@@ -130,20 +130,63 @@ func Forward(
 	if !strings.Contains(contentType, "text/event-stream") {
 		responseBody, err := io.ReadAll(response.Body)
 		if err != nil {
-			return 0, nil, nil, err
+			return Result{}, err
 		}
 		w.Header().Set("Content-Type", contentType)
 		w.WriteHeader(response.StatusCode)
 		_, _ = w.Write(responseBody)
 		inputTokens, outputTokens := Usage(responseBody)
-		return response.StatusCode, inputTokens, outputTokens, nil
+		return Result{
+			Status: response.StatusCode, InputTokens: inputTokens, OutputTokens: outputTokens,
+			TextBytes: nonStreamingTextBytes(responseBody),
+		}, nil
 	}
 	return relayStream(response, w)
 }
 
+// Result reports what one relayed coach call produced. A zero Status means
+// nothing was written to the ResponseWriter yet, so the caller may still send
+// an error response of its own.
+type Result struct {
+	Status       int
+	InputTokens  *int
+	OutputTokens *int
+	// TextBytes is the size of the assembled text blocks — the report itself,
+	// with thinking excluded. It is the one number that distinguishes a real
+	// answer from the schema-valid but entirely blank report the model
+	// occasionally returns (observed 2026-08-04: ~6.9k output tokens against a
+	// 152-byte reply). Token counts alone cannot tell those apart, because
+	// thinking dominates both.
+	TextBytes int
+}
+
+// EmptyReportBytes is roughly the size of a report whose every field is blank.
+// A 200 with a smaller text payload than this is almost certainly the empty
+// shell rather than coaching.
+const EmptyReportBytes = 400
+
+func nonStreamingTextBytes(responseBody []byte) int {
+	var payload struct {
+		Content []struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		} `json:"content"`
+	}
+	if json.Unmarshal(responseBody, &payload) != nil {
+		return 0
+	}
+	total := 0
+	for _, block := range payload.Content {
+		if block.Type == "text" {
+			total += len(block.Text)
+		}
+	}
+	return total
+}
+
 // relayStream copies an SSE body line by line, flushing each one so no idle
 // gap forms, and scrapes token usage from the events on their way past.
-func relayStream(response *http.Response, w http.ResponseWriter) (int, *int, *int, error) {
+func relayStream(response *http.Response, w http.ResponseWriter) (Result, error) {
 	w.Header().Set("Content-Type", contentTypeSSE)
 	// Proxies that buffer would reintroduce exactly the idle gap streaming
 	// exists to avoid.
@@ -155,7 +198,7 @@ func relayStream(response *http.Response, w http.ResponseWriter) (int, *int, *in
 		flusher.Flush() // send headers now, before the model's first token
 	}
 
-	var inputTokens, outputTokens *int
+	result := Result{Status: response.StatusCode}
 	reader := bufio.NewReader(response.Body)
 	for {
 		// ReadBytes rather than bufio.Scanner: a single SSE line has no
@@ -164,29 +207,31 @@ func relayStream(response *http.Response, w http.ResponseWriter) (int, *int, *in
 		line, readErr := reader.ReadBytes('\n')
 		if len(line) > 0 {
 			if _, writeErr := w.Write(line); writeErr != nil {
-				return response.StatusCode, inputTokens, outputTokens, writeErr
+				return result, writeErr
 			}
 			if flusher != nil {
 				flusher.Flush()
 			}
-			scrapeUsage(line, &inputTokens, &outputTokens)
+			scrapeEvent(line, &result)
 		}
 		if readErr != nil {
 			if errors.Is(readErr, io.EOF) {
-				return response.StatusCode, inputTokens, outputTokens, nil
+				return result, nil
 			}
-			return response.StatusCode, inputTokens, outputTokens, readErr
+			return result, readErr
 		}
 	}
 }
 
 const contentTypeSSE = "text/event-stream"
 
-// scrapeUsage pulls token counts out of a passing SSE line. `message_start`
-// carries the input count on a nested message; `message_delta` carries the
-// running output count at the top level. Later values overwrite earlier ones,
-// so the final delta wins.
-func scrapeUsage(line []byte, inputTokens, outputTokens **int) {
+// scrapeEvent reads what the accounting and the empty-report signal need out
+// of a passing SSE line. `message_start` carries the input count on a nested
+// message; `message_delta` carries the running output count at the top level.
+// Later values overwrite earlier ones, so the final delta wins. `text_delta`
+// chunks are summed to size the report itself — deliberately only text_delta,
+// so thinking never inflates the count.
+func scrapeEvent(line []byte, result *Result) {
 	data, found := bytes.CutPrefix(bytes.TrimSpace(line), []byte("data:"))
 	if !found {
 		return
@@ -196,17 +241,24 @@ func scrapeUsage(line []byte, inputTokens, outputTokens **int) {
 			Usage tokenUsage `json:"usage"`
 		} `json:"message"`
 		Usage tokenUsage `json:"usage"`
+		Delta struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		} `json:"delta"`
 	}
 	if json.Unmarshal(bytes.TrimSpace(data), &event) != nil {
 		return
 	}
 	for _, usage := range []tokenUsage{event.Message.Usage, event.Usage} {
 		if usage.InputTokens != nil {
-			*inputTokens = usage.InputTokens
+			result.InputTokens = usage.InputTokens
 		}
 		if usage.OutputTokens != nil {
-			*outputTokens = usage.OutputTokens
+			result.OutputTokens = usage.OutputTokens
 		}
+	}
+	if event.Delta.Type == "text_delta" {
+		result.TextBytes += len(event.Delta.Text)
 	}
 }
 

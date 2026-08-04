@@ -5,6 +5,7 @@ enum CoachError: LocalizedError {
     case http(Int, String)
     case refused(String?)
     case badResponse
+    case emptyAssessment
 
     var errorDescription: String? {
         switch self {
@@ -16,6 +17,8 @@ enum CoachError: LocalizedError {
             explanation ?? "The model declined to assess this set."
         case .badResponse:
             "Could not read the coaching response."
+        case .emptyAssessment:
+            "The coach came back empty-handed. Tap Regenerate to try again."
         }
     }
 }
@@ -76,6 +79,11 @@ enum CoachClient {
         let text = try await assembledText(from: stream)
         guard let json = text.data(using: .utf8) else { throw CoachError.badResponse }
         let report = try JSONDecoder().decode(CoachReport.self, from: json)
+        // Separated from the `sanitized()` nil below so the lifter is told the
+        // difference between "the model said nothing, retry" and "the reply
+        // was unreadable" — the first is worth a Regenerate tap, and caching a
+        // blank report would have made it look like a finished assessment.
+        if report.isEmptyShell { throw CoachError.emptyAssessment }
         guard let sane = report.sanitized() else { throw CoachError.badResponse }
         return sane
     }

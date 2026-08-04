@@ -54,10 +54,10 @@ func (a *api) coach(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), coachDeadline)
 	defer cancel()
 
-	status, inputTokens, outputTokens, err := coach.Forward(
+	result, err := coach.Forward(
 		ctx, a.coachClient, a.deps.AnthropicURL, a.deps.Cfg.AnthropicAPIKey, prepared, w)
 	if err != nil {
-		if status == 0 {
+		if result.Status == 0 {
 			// Nothing written yet, so a normal error response is still valid.
 			a.serverError(w, err, "anthropic forward")
 			return
@@ -67,12 +67,23 @@ func (a *api) coach(w http.ResponseWriter, r *http.Request) {
 		slog.Warn("coach stream interrupted", "user", user.ID, "err", err)
 	}
 
+	// text_bytes is the diagnostic that token counts can't give: thinking
+	// dominates output_tokens, so a blank report and a real one look alike
+	// there but differ by an order of magnitude here.
+	slog.Info("coach reply", "user", user.ID, "status", result.Status,
+		"text_bytes", result.TextBytes, "output_tokens", result.OutputTokens)
+	if result.Status == http.StatusOK && result.TextBytes < coach.EmptyReportBytes {
+		slog.Warn("coach returned an empty report",
+			"user", user.ID, "text_bytes", result.TextBytes,
+			"output_tokens", result.OutputTokens)
+	}
+
 	// The call reached Anthropic and consumed quota even if the client hung up
 	// on the way back, so account for it on a context that outlives the
 	// request rather than losing the row to the cancellation.
 	if err := a.deps.Store.InsertCoachUsage(
 		context.WithoutCancel(r.Context()),
-		user.ID, a.deps.Cfg.CoachModel, inputTokens, outputTokens, status,
+		user.ID, a.deps.Cfg.CoachModel, result.InputTokens, result.OutputTokens, result.Status,
 	); err != nil {
 		slog.Warn("usage insert failed", "err", err)
 	}

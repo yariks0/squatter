@@ -152,16 +152,18 @@ func TestForwardStreamsAndFlushesSSE(t *testing.T) {
 	defer upstream.Close()
 
 	recorder := &flushRecorder{ResponseRecorder: httptest.NewRecorder()}
-	status, in, out, err := Forward(
+	result, err := Forward(
 		context.Background(), upstream.Client(), upstream.URL, "k", []byte("{}"), recorder)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if status != http.StatusOK {
-		t.Fatalf("status: %d", status)
+	if result.Status != http.StatusOK {
+		t.Fatalf("status: %d", result.Status)
 	}
-	if in == nil || *in != 120 || out == nil || *out != 45 {
-		t.Fatalf("usage scraped from stream: in=%v out=%v", in, out)
+	if result.InputTokens == nil || *result.InputTokens != 120 ||
+		result.OutputTokens == nil || *result.OutputTokens != 45 {
+		t.Fatalf("usage scraped from stream: in=%v out=%v",
+			result.InputTokens, result.OutputTokens)
 	}
 	if recorder.flushes == 0 {
 		t.Fatal("stream was buffered, not flushed — the idle gap would return")
@@ -185,13 +187,14 @@ func TestForwardRelaysNonStreamingBody(t *testing.T) {
 	defer upstream.Close()
 
 	recorder := &flushRecorder{ResponseRecorder: httptest.NewRecorder()}
-	status, in, out, err := Forward(
+	result, err := Forward(
 		context.Background(), upstream.Client(), upstream.URL, "k", []byte("{}"), recorder)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if status != http.StatusOK || in == nil || *in != 7 || out == nil || *out != 3 {
-		t.Fatalf("non-stream relay: status=%d in=%v out=%v", status, in, out)
+	if result.Status != http.StatusOK || result.InputTokens == nil || *result.InputTokens != 7 ||
+		result.OutputTokens == nil || *result.OutputTokens != 3 {
+		t.Fatalf("non-stream relay: %+v", result)
 	}
 }
 
@@ -199,13 +202,47 @@ func TestForwardRelaysNonStreamingBody(t *testing.T) {
 // the handler still send a real error response.
 func TestForwardReportsUnwrittenFailure(t *testing.T) {
 	recorder := &flushRecorder{ResponseRecorder: httptest.NewRecorder()}
-	status, _, _, err := Forward(context.Background(), http.DefaultClient,
+	result, err := Forward(context.Background(), http.DefaultClient,
 		"http://127.0.0.1:1", "k", []byte("{}"), recorder)
 	if err == nil {
 		t.Fatal("expected a dial failure")
 	}
-	if status != 0 {
-		t.Fatalf("status should be 0 when nothing was written, got %d", status)
+	if result.Status != 0 {
+		t.Fatalf("status should be 0 when nothing was written, got %d", result.Status)
+	}
+}
+
+// TextBytes must size the report alone. Thinking shares the stream and dwarfs
+// it, so counting thinking deltas would hide exactly the empty-report case
+// this measurement exists to expose.
+func TestForwardCountsTextBytesExcludingThinking(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/event-stream")
+			for _, line := range []string{
+				`data: {"type":"content_block_delta","index":0,` +
+					`"delta":{"type":"thinking_delta","thinking":"` +
+					strings.Repeat("z", 5000) + `"}}`,
+				`data: {"type":"content_block_delta","index":1,` +
+					`"delta":{"type":"text_delta","text":"{\"summary\":\"\"}"}}`,
+			} {
+				_, _ = w.Write([]byte(line + "\n\n"))
+				w.(http.Flusher).Flush()
+			}
+		}))
+	defer upstream.Close()
+
+	recorder := &flushRecorder{ResponseRecorder: httptest.NewRecorder()}
+	result, err := Forward(
+		context.Background(), upstream.Client(), upstream.URL, "k", []byte("{}"), recorder)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.TextBytes != len(`{"summary":""}`) {
+		t.Fatalf("text bytes should count text_delta only, got %d", result.TextBytes)
+	}
+	if result.TextBytes >= EmptyReportBytes {
+		t.Fatal("an empty report should fall under the empty-report threshold")
 	}
 }
 

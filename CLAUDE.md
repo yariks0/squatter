@@ -112,8 +112,18 @@ checks" → `xcrun simctl shutdown all` and retry.
 - **Coach proxy boundary**: the app still builds the entire Anthropic
   Messages body (`CoachPrompt` embeds live `AnalysisTuning` thresholds — a
   Go duplicate would rot). The backend validates shape/size, **pins the
-  model**, enforces a per-user daily quota, injects the key, and returns
-  Anthropic's response verbatim — so `CoachClient`'s parsing is unchanged.
+  model**, enforces a per-user daily quota, injects the key, and relays
+  Anthropic's response verbatim.
+- **The coach call is streamed** (`"stream": true`), not for progressive UI
+  but because a buffered one is silent for ~90 s and idle connections that
+  long get killed in transit (prod Caddy, QUIC idle timeout, 58 s → bare
+  504). The proxy flushes each SSE line onward and `CoachClient` rebuilds the
+  report JSON from `text_delta` events — accumulating **text blocks only**,
+  since adaptive thinking shares the stream. `/v1/coach` therefore bypasses
+  `http.TimeoutHandler`, which buffers and would undo it. Non-SSE replies
+  still relay whole, so an older installed build keeps working — but the app
+  now sends a `stream` field the old proxy rejects, so **deploy the backend
+  before shipping an app build**.
 - **Sync scope**: only the portable slice syncs — per-session
   `{date, activity, score, repCount, usedLiDAR, weightKg}` + the `RepMetrics`
   array (server stores reps as opaque JSONB), plus the body-geometry and

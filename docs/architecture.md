@@ -155,6 +155,18 @@ Caddy TLS edge, db + api unpublished; see "Production deployment" below). See
 - Timeouts: 30 s on every route **except** `/v1/coach` (310 s > the 300 s
   upstream call). Any reverse proxy/LB must raise its idle timeout to match —
   prod's Caddy sets `response_header_timeout 320s` for exactly this.
+- **`/v1/coach` streams, and is routed *around* `TimeoutHandler`.**
+  `http.TimeoutHandler` buffers the whole response and its writer is not an
+  `http.Flusher`, so wrapping the coach route would hold the SSE relay until
+  the model finished — exactly the idle gap streaming removes. The route
+  carries its own deadline (`coachDeadline`) instead. A buffered coach call
+  sends no bytes for ~90 s, and on 2026-08-04 prod's Caddy killed one at 58 s
+  with `timeout: no recent network activity` (a QUIC/HTTP-3 idle timeout,
+  which `response_header_timeout` does *not* govern — that knob is on the
+  TCP/HTTP transport). The app sends `"stream": true`; the proxy relays each
+  SSE line flushed, scraping `message_start` / `message_delta` for usage on
+  the way past. Non-SSE replies (upstream errors, or an older app that omits
+  `stream`) still relay whole, so old builds keep working.
 - **`TRUST_PROXY` decides where the IP rate limiter reads the client address.**
   Unset (dev, direct exposure) ⇒ `RemoteAddr`. `true` (prod, behind Caddy) ⇒
   the **last** `X-Forwarded-For` entry, which is the hop the proxy appends and

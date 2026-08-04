@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"io"
 	"log/slog"
 	"net/http"
@@ -10,6 +11,10 @@ import (
 )
 
 const maxCoachBodyBytes = 25 << 20 // keyframes ≈ 100–300 KB each; generous headroom
+
+// coachDeadline bounds one coach call end to end. It sits above the 300 s
+// upstream client timeout so Anthropic is always the first to give up.
+const coachDeadline = 310 * time.Second
 
 // coach proxies the app-built Anthropic Messages request: validate, pin the
 // model, enforce the daily quota, forward with the server-held key, return
@@ -41,21 +46,34 @@ func (a *api) coach(w http.ResponseWriter, r *http.Request) {
 	}
 
 	slog.Info("coach call", "user", user.ID, "bytes", len(prepared))
-	status, responseBody, err := coach.Forward(
-		r.Context(), a.coachClient, a.deps.AnthropicURL, a.deps.Cfg.AnthropicAPIKey, prepared)
+	// This route is deliberately outside the mux-wide TimeoutHandler (see
+	// httpapi.New): TimeoutHandler buffers the whole response and its writer
+	// is not an http.Flusher, which would silently undo the streaming relay.
+	// The deadline lives here instead, where it bounds the call without
+	// holding the bytes back.
+	ctx, cancel := context.WithTimeout(r.Context(), coachDeadline)
+	defer cancel()
+
+	status, inputTokens, outputTokens, err := coach.Forward(
+		ctx, a.coachClient, a.deps.AnthropicURL, a.deps.Cfg.AnthropicAPIKey, prepared, w)
 	if err != nil {
-		a.serverError(w, err, "anthropic forward")
-		return
+		if status == 0 {
+			// Nothing written yet, so a normal error response is still valid.
+			a.serverError(w, err, "anthropic forward")
+			return
+		}
+		// Mid-stream failure: the status line is long gone, so the client
+		// sees a truncated stream. Record it rather than pretending success.
+		slog.Warn("coach stream interrupted", "user", user.ID, "err", err)
 	}
 
-	inputTokens, outputTokens := coach.Usage(responseBody)
+	// The call reached Anthropic and consumed quota even if the client hung up
+	// on the way back, so account for it on a context that outlives the
+	// request rather than losing the row to the cancellation.
 	if err := a.deps.Store.InsertCoachUsage(
-		r.Context(), user.ID, a.deps.Cfg.CoachModel, inputTokens, outputTokens, status,
+		context.WithoutCancel(r.Context()),
+		user.ID, a.deps.Cfg.CoachModel, inputTokens, outputTokens, status,
 	); err != nil {
 		slog.Warn("usage insert failed", "err", err)
 	}
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_, _ = w.Write(responseBody)
 }

@@ -1,7 +1,10 @@
 package coach
 
 import (
+	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 )
@@ -121,6 +124,97 @@ func TestValidateAcceptsRealShape(t *testing.T) {
 		t.Fatalf("valid body rejected: %v", err)
 	}
 }
+
+func TestValidateAcceptsStream(t *testing.T) {
+	body := minimalBody(t, map[string]any{"stream": true})
+	if _, err := ValidateAndPrepare(body, "m", DefaultLimits); err != nil {
+		t.Fatalf("stream should be an allowed field: %v", err)
+	}
+}
+
+// An SSE reply must reach the client incrementally: the whole point is that no
+// idle gap forms while the model works, so a flush has to land before the
+// stream ends.
+func TestForwardStreamsAndFlushesSSE(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "text/event-stream")
+			w.WriteHeader(http.StatusOK)
+			for _, line := range []string{
+				`data: {"type":"message_start","message":{"usage":{"input_tokens":120}}}`,
+				`data: {"type":"content_block_delta","delta":{"text":"{"}}`,
+				`data: {"type":"message_delta","usage":{"output_tokens":45}}`,
+			} {
+				_, _ = w.Write([]byte(line + "\n\n"))
+				w.(http.Flusher).Flush()
+			}
+		}))
+	defer upstream.Close()
+
+	recorder := &flushRecorder{ResponseRecorder: httptest.NewRecorder()}
+	status, in, out, err := Forward(
+		context.Background(), upstream.Client(), upstream.URL, "k", []byte("{}"), recorder)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status != http.StatusOK {
+		t.Fatalf("status: %d", status)
+	}
+	if in == nil || *in != 120 || out == nil || *out != 45 {
+		t.Fatalf("usage scraped from stream: in=%v out=%v", in, out)
+	}
+	if recorder.flushes == 0 {
+		t.Fatal("stream was buffered, not flushed — the idle gap would return")
+	}
+	if got := recorder.Header().Get("Content-Type"); got != contentTypeSSE {
+		t.Fatalf("content type not relayed: %q", got)
+	}
+	if !strings.Contains(recorder.Body.String(), `"content_block_delta"`) {
+		t.Fatal("event body not relayed verbatim")
+	}
+}
+
+// A non-SSE upstream reply (an error, or an older app that omits `stream`)
+// still relays whole, with usage read off the JSON body.
+func TestForwardRelaysNonStreamingBody(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"usage":{"input_tokens":7,"output_tokens":3}}`))
+		}))
+	defer upstream.Close()
+
+	recorder := &flushRecorder{ResponseRecorder: httptest.NewRecorder()}
+	status, in, out, err := Forward(
+		context.Background(), upstream.Client(), upstream.URL, "k", []byte("{}"), recorder)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status != http.StatusOK || in == nil || *in != 7 || out == nil || *out != 3 {
+		t.Fatalf("non-stream relay: status=%d in=%v out=%v", status, in, out)
+	}
+}
+
+// Forward reports status 0 when it never wrote anything, which is what lets
+// the handler still send a real error response.
+func TestForwardReportsUnwrittenFailure(t *testing.T) {
+	recorder := &flushRecorder{ResponseRecorder: httptest.NewRecorder()}
+	status, _, _, err := Forward(context.Background(), http.DefaultClient,
+		"http://127.0.0.1:1", "k", []byte("{}"), recorder)
+	if err == nil {
+		t.Fatal("expected a dial failure")
+	}
+	if status != 0 {
+		t.Fatalf("status should be 0 when nothing was written, got %d", status)
+	}
+}
+
+type flushRecorder struct {
+	*httptest.ResponseRecorder
+	flushes int
+}
+
+func (f *flushRecorder) Flush() { f.flushes++; f.ResponseRecorder.Flush() }
 
 func TestUsageParsing(t *testing.T) {
 	in, out := Usage([]byte(`{"usage":{"input_tokens":120,"output_tokens":45}}`))

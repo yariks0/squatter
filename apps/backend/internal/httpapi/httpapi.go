@@ -60,13 +60,15 @@ func New(deps Deps) http.Handler {
 	mux.Handle("GET /v1/sessions", a.authed(a.listSessions))
 	mux.Handle("DELETE /v1/sessions/{id}", a.authed(a.deleteSession))
 
-	// Everything gets a 30 s deadline except the coach proxy (310 s > the
-	// 300 s upstream timeout); TimeoutHandler wraps the whole mux, so the
-	// coach route is dispatched around it.
+	// Everything gets a 30 s deadline except the coach proxy, which is routed
+	// around TimeoutHandler altogether: TimeoutHandler buffers the entire
+	// response and its writer does not implement http.Flusher, so wrapping the
+	// coach route would hold the SSE relay back until the model finished —
+	// recreating the long idle gap that streaming exists to remove. That
+	// route carries its own deadline (see coachDeadline in coach_handler.go).
 	timed := http.TimeoutHandler(mux, 30*time.Second, `{"error":{"message":"timeout"}}`)
 	root := http.NewServeMux()
-	root.Handle("POST /v1/coach", http.TimeoutHandler(mux, 310*time.Second,
-		`{"error":{"message":"timeout"}}`))
+	root.Handle("POST /v1/coach", mux)
 	root.Handle("/", timed)
 
 	return a.logRequests(a.recoverPanics(root))

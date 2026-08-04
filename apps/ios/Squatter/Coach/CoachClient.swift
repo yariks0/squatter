@@ -38,6 +38,13 @@ enum CoachClient {
         let body: [String: Any] = [
             "model": model,
             "max_tokens": 24000,
+            // Streamed, and not for progressive display: a buffered coach call
+            // sits silent for ~90 s while the model works, and a connection
+            // idle that long gets torn down in transit (a QUIC/HTTP-3 idle
+            // timeout at the TLS edge killed one at 58 s with a bare 504).
+            // SSE keeps bytes moving, so nothing on the path sees an idle
+            // connection. The backend relays the events unbuffered.
+            "stream": true,
             "thinking": ["type": "adaptive"],
             "system": CoachPrompt.systemPrompt(activity: analysis.kind),
             "messages": [[
@@ -57,28 +64,70 @@ enum CoachClient {
         request.timeoutInterval = 300
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
-        let (data, response) = try await URLSession.shared.data(for: request)
+        let (stream, response) = try await URLSession.shared.bytes(for: request)
         let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         if status == 401 { throw CoachError.unauthenticated }
         guard status == 200 else {
-            let message = errorMessage(from: data) ?? "no details"
-            throw CoachError.http(status, message)
+            var data = Data()
+            for try await byte in stream { data.append(byte) }
+            throw CoachError.http(status, errorMessage(from: data) ?? "no details")
         }
 
-        guard let payload = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let content = payload["content"] as? [[String: Any]]
-        else { throw CoachError.badResponse }
-
-        if payload["stop_reason"] as? String == "refusal" {
-            let details = payload["stop_details"] as? [String: Any]
-            throw CoachError.refused(details?["explanation"] as? String)
-        }
-        guard let text = content.first(where: { $0["type"] as? String == "text" })?["text"] as? String,
-              let json = text.data(using: .utf8)
-        else { throw CoachError.badResponse }
+        let text = try await assembledText(from: stream)
+        guard let json = text.data(using: .utf8) else { throw CoachError.badResponse }
         let report = try JSONDecoder().decode(CoachReport.self, from: json)
         guard let sane = report.sanitized() else { throw CoachError.badResponse }
         return sane
+    }
+
+    /// Rebuilds the report JSON from the SSE event stream — the streaming
+    /// equivalent of reading `content[.type == "text"].text` off a whole
+    /// response.
+    ///
+    /// Only text blocks are accumulated. Adaptive thinking emits its own
+    /// blocks in the same stream, and folding those into the buffer would
+    /// corrupt the JSON.
+    private static func assembledText(from stream: URLSession.AsyncBytes) async throws -> String {
+        var text = ""
+        var textBlocks: Set<Int> = []
+        var refusal: String??
+
+        for try await line in stream.lines {
+            guard line.hasPrefix("data:") else { continue } // skip `event:`/keep-alives
+            let payload = line.dropFirst("data:".count).trimmingCharacters(in: .whitespaces)
+            guard let data = payload.data(using: .utf8),
+                  let event = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+            else { continue }
+
+            switch event["type"] as? String {
+            case "content_block_start":
+                if let index = event["index"] as? Int,
+                   let block = event["content_block"] as? [String: Any],
+                   block["type"] as? String == "text" {
+                    textBlocks.insert(index)
+                }
+            case "content_block_delta":
+                if let index = event["index"] as? Int, textBlocks.contains(index),
+                   let delta = event["delta"] as? [String: Any],
+                   delta["type"] as? String == "text_delta",
+                   let chunk = delta["text"] as? String {
+                    text += chunk
+                }
+            case "message_delta":
+                if let delta = event["delta"] as? [String: Any],
+                   delta["stop_reason"] as? String == "refusal" {
+                    let details = delta["stop_details"] as? [String: Any]
+                    refusal = .some(details?["explanation"] as? String)
+                }
+            case "error":
+                let error = event["error"] as? [String: Any]
+                throw CoachError.http(200, error?["message"] as? String ?? "stream error")
+            default:
+                break
+            }
+        }
+        if case let .some(explanation) = refusal { throw CoachError.refused(explanation) }
+        return text
     }
 
     private static func errorMessage(from data: Data) -> String? {

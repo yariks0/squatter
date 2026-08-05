@@ -56,6 +56,7 @@ func (a *api) coach(w http.ResponseWriter, r *http.Request) {
 
 	result, err := coach.Forward(
 		ctx, a.coachClient, a.deps.AnthropicURL, a.deps.Cfg.AnthropicAPIKey, prepared, w)
+	interrupted := false
 	if err != nil {
 		if result.Status == 0 {
 			// Nothing written yet, so a normal error response is still valid.
@@ -64,16 +65,23 @@ func (a *api) coach(w http.ResponseWriter, r *http.Request) {
 		}
 		// Mid-stream failure: the status line is long gone, so the client
 		// sees a truncated stream. Record it rather than pretending success.
+		interrupted = true
 		slog.Warn("coach stream interrupted", "user", user.ID, "err", err)
 	}
 
 	// text_bytes is the diagnostic that token counts can't give: thinking
 	// dominates output_tokens, so a blank report and a real one look alike
 	// there but differ by an order of magnitude here.
+	// `interrupted` belongs on this line, not only on the warning above: a cut
+	// stream leaves output_tokens holding the small placeholder from
+	// message_start, which reads like "the model wrote almost nothing" when it
+	// actually means "we never saw the end". Without the flag the two are
+	// indistinguishable here.
 	slog.Info("coach reply", "user", user.ID, "status", result.Status,
 		"text_bytes", result.TextBytes, "output_tokens", result.OutputTokens,
-		"stop_reason", result.StopReason)
-	if result.Status == http.StatusOK && result.TextBytes < coach.EmptyReportBytes {
+		"stop_reason", result.StopReason, "interrupted", interrupted)
+	if result.Status == http.StatusOK && !interrupted &&
+		result.TextBytes < coach.EmptyReportBytes {
 		// The sample is logged only on this path: a healthy reply is the
 		// lifter's own coaching and has no business in the server log, but a
 		// short one is the whole diagnostic.

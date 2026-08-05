@@ -174,10 +174,15 @@ type Result struct {
 // of a report, small enough that a full one is never held in memory here.
 const sampleLimit = 512
 
-// EmptyReportBytes is roughly the size of a report whose every field is blank.
-// A 200 with a smaller text payload than this is almost certainly the empty
-// shell rather than coaching.
-const EmptyReportBytes = 400
+// EmptyReportBytes is the tripwire for "that reply was too small to be
+// coaching". A healthy report runs ~5 KB; the all-blank shell is ~150 B. It
+// sat at 400 until a 414-byte degenerate reply slipped past it by 14 bytes
+// (2026-08-05) and went unsampled, so it is set well clear of both extremes.
+//
+// This only gates a log line and the diagnostic sample — the client's
+// `isUnusable` check is what actually rejects a report — so erring high costs
+// nothing but an occasional sample of a legitimately terse reply.
+const EmptyReportBytes = 1200
 
 func nonStreamingTextBytes(responseBody []byte) int {
 	var payload struct {

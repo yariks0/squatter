@@ -319,7 +319,12 @@ same unit-space `Canvas` idiom as `FormHintView`, driven by
 `TimelineView(.animation)`, static end-pose under Reduce Motion. Adding a
 drill means adding both the enum case and its `draw` branch; the schema enum
 is generated from `allCases`, so the model can only ever tag what the app
-can draw. The medical guardrail stands: training for healthy tissue only,
+can draw. **Poses are authored in a square unit space and the canvas
+letterboxes them** (`side = min(width, height)`, centred) — scaling x by
+width and y by height instead flattened every figure into a horizontal
+scribble on a card three times wider than tall, and that is why the hint
+cards are sized by height. Keep bottom captions at y ≤ 0.94; anything lower
+is centred within a couple of points of the edge and gets clipped. The medical guardrail stands: training for healthy tissue only,
 never rehabilitation.
 
 The system prompt runs **two further missions**: coaching (trust metrics over pixels

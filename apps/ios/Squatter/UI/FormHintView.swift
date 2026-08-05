@@ -11,7 +11,9 @@ struct FormHintView: View {
             panel(correct: false)
             panel(correct: true)
         }
-        .frame(height: 104)
+        // Two letterboxed panels side by side: each figure is capped by the
+        // panel's height, so this drives how large the diagrams read.
+        .frame(height: 150)
     }
 
     private func panel(correct: Bool) -> some View {
@@ -43,8 +45,16 @@ private struct FormDiagram {
 
     private var ink: Color { Color.primary.opacity(0.55) }
 
+    /// Square unit space, letterboxed into the panel — see the matching note
+    /// in `ExerciseDiagram`. Both hint styles share one visual language, so
+    /// they share this mapping too.
+    private var side: CGFloat { min(size.width, size.height) }
+
     private func point(_ x: CGFloat, _ y: CGFloat) -> CGPoint {
-        CGPoint(x: x * size.width, y: y * size.height)
+        CGPoint(
+            x: (size.width - side) / 2 + x * side,
+            y: (size.height - side) / 2 + y * side
+        )
     }
 
     private func path(_ points: [(CGFloat, CGFloat)]) -> Path {
@@ -68,7 +78,7 @@ private struct FormDiagram {
 
     private func disc(_ x: CGFloat, _ y: CGFloat, radius: CGFloat, _ color: Color) {
         let center = point(x, y)
-        let r = radius * size.height
+        let r = radius * side
         context.fill(
             Path(ellipseIn: CGRect(x: center.x - r, y: center.y - r, width: 2 * r, height: 2 * r)),
             with: .color(color)

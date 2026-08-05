@@ -83,7 +83,10 @@ struct ExerciseHintView: View {
                 }
             }
         }
-        .frame(height: 118)
+        // The letterboxed figure is only as wide as the card is tall, so the
+        // card has to be taller than the old stretched-to-fit 118 to keep the
+        // drill readable.
+        .frame(height: 170)
         .frame(maxWidth: .infinity)
         .background(.quinary, in: RoundedRectangle(cornerRadius: 10))
         .overlay(alignment: .topLeading) {
@@ -159,8 +162,18 @@ private struct ExerciseDiagram {
 
     private var ink: Color { Color.primary.opacity(0.55) }
 
+    /// The poses are authored in a *square* unit space, so unit coordinates
+    /// map through the largest centred square the canvas allows rather than
+    /// stretching to fill it. Scaling x by width and y by height instead
+    /// flattened every figure into a horizontal scribble on these wide cards
+    /// (~3.25:1), which is what shipped until 2026-08-04.
+    private var side: CGFloat { min(size.width, size.height) }
+
     private func point(_ x: CGFloat, _ y: CGFloat) -> CGPoint {
-        CGPoint(x: x * size.width, y: y * size.height)
+        CGPoint(
+            x: (size.width - side) / 2 + x * side,
+            y: (size.height - side) / 2 + y * side
+        )
     }
 
     private func path(_ points: [(CGFloat, CGFloat)]) -> Path {
@@ -184,7 +197,7 @@ private struct ExerciseDiagram {
 
     private func disc(_ x: CGFloat, _ y: CGFloat, radius: CGFloat, _ color: Color) {
         let center = point(x, y)
-        let r = radius * size.height
+        let r = radius * side
         context.fill(
             Path(ellipseIn: CGRect(x: center.x - r, y: center.y - r, width: 2 * r, height: 2 * r)),
             with: .color(color)
@@ -243,7 +256,7 @@ private struct ExerciseDiagram {
             figure(j, limb: accent)
             // The heel must never leave the floor — that's the whole drill.
             disc(0.56, 0.90, radius: 0.022, .green)
-            label("heel down", 0.30, 0.97, .green)
+            label("heel down", 0.30, 0.94, .green)
             arrow(from: (0.62, 0.44), to: (0.62 + 0.16 * t, 0.44), accent)
 
         case .deepSquatHold:
@@ -353,7 +366,7 @@ private struct ExerciseDiagram {
             stroke([leftKnee, rightKnee], .orange, width: 3)
             arrow(from: (leftKnee.0 + 0.02, 0.50), to: (leftKnee.0 - 0.06, 0.50), accent)
             arrow(from: (rightKnee.0 - 0.02, 0.50), to: (rightKnee.0 + 0.06, 0.50), accent)
-            label("drive knees out", 0.50, 0.98, accent)
+            label("drive knees out", 0.50, 0.94, accent)
 
         case .romanianDeadlift:
             floor()
@@ -387,7 +400,7 @@ private struct ExerciseDiagram {
             stroke([(0.38, 0.70), (0.36 - 0.06 * t, 0.60), hand], accent)
             let foot: (CGFloat, CGFloat) = (0.78 + 0.14 * t, 0.60 + 0.14 * t)
             stroke([(0.64, 0.72), (0.74, 0.58), foot], accent)
-            label("back flat", 0.50, 0.98, .green)
+            label("back flat", 0.50, 0.94, .green)
         }
     }
 }

@@ -32,11 +32,12 @@ UI (HomeView routes)
  │        and replaces the originals in place (same URL + creation date);
  │        the uncut recording is deleted. Failure falls back to passing
  │        analysisRange over the untouched file.
- │        AnalysisViewModel.run (wrapped in BackgroundAnalysisActivity —
+ │        AnalysisViewModel.run (wrapped in BackgroundWorkActivity —
  │        App/ — so leaving the app doesn't stall it: beginBackgroundTask
  │        always, plus an iOS 26 BGContinuedProcessingTask with system
  │        progress UI fed from extraction progress; wildcard identifier
- │        com.yarik.squatter.analysis.* in both Info plists. Its BGTask
+ │        com.yarik.squatter.analysis.* in both Info plists, shared with
+ │        the coach call which wraps the same way. Its BGTask
  │        launch + expiration handlers MUST be @Sendable: formed inside the
  │        @MainActor class they'd inherit its isolation, and the scheduler
  │        calls them off-main — Swift 6's prologue check then SIGTRAPs before

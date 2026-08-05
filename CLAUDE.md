@@ -74,12 +74,22 @@ checks" → `xcrun simctl shutdown all` and retry.
   `CoachReport` mirrors
   `CoachPrompt.outputSchema` — keep in sync (new report fields optional: old
   `.coach` caches must decode). **A schema-valid reply can still be junk**, so
-  `sanitized()` is the semantic gate and rejects two shapes: JSON residue
-  nested in a prose field, and the all-empty shell (every field blank —
-  observed on prod with ~6.9k output tokens of thinking behind it). Both
-  return nil, which drops the cache and offers a regenerate rather than
-  rendering a blank card. The proxy logs `text_bytes` per reply so empties are
-  visible server-side without pulling `.coach` off the device. Report cached as `.coach` beside the video.
+  `sanitized()` is the semantic gate: it recovers JSON residue nested in a
+  prose field, drops half-written drills, and returns nil when the result
+  `isUnusable` — a blank priority cue *or* blank summary, the two fields the
+  review screen always renders. That covers both failure grades seen on prod:
+  the all-blank shell, and the partial reply carrying a finding but no cue.
+  nil drops the cache and offers a regenerate instead of a blank card. The
+  proxy logs `text_bytes`, `stop_reason`, and (only when short) a `sample` of
+  the reply, so empties are diagnosable server-side without pulling `.coach`
+  off the device.
+- **Long jobs run under `BackgroundWorkActivity`** (`App/`): set analysis and
+  the coach call both wrap in it, so locking the screen mid-run doesn't
+  suspend the process and kill the work. Progress updates are mandatory — a
+  stalled continued-processing task is expired — so the coach paces its pill
+  off elapsed time, having no measurable progress of its own. Both share the
+  one `com.yarik.squatter.analysis.*` plist wildcard; only `title`/`subtitle`
+  differ, so a new job needs no plist change. Report cached as `.coach` beside the video.
   `CoachClient` POSTs the Anthropic body to the backend `/v1/coach` proxy
   with the session bearer — the Anthropic key lives server-side now, not in
   the app. Proxy cap bumps (max_tokens etc.) deploy server-first. See

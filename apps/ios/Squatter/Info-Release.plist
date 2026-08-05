@@ -6,7 +6,7 @@
      build setting. -->
 <plist version="1.0">
 <dict>
-    <!-- BackgroundAnalysisActivity's continued-processing tasks (iOS 26+):
+    <!-- BackgroundWorkActivity's continued-processing tasks (iOS 26+):
          wildcard per Apple's contract — each analysis run submits a unique
          suffix under this prefix. Keep in sync with Info-Debug.plist. -->
     <key>BGTaskSchedulerPermittedIdentifiers</key>

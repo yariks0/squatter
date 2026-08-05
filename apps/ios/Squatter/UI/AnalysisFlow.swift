@@ -19,11 +19,14 @@ final class AnalysisViewModel {
     }
 
     /// Runs once; calls `onFinished` exactly once on success. The run is
-    /// wrapped in a `BackgroundAnalysisActivity`, so leaving the app or
+    /// wrapped in a `BackgroundWorkActivity`, so leaving the app or
     /// locking the screen doesn't stall extraction.
     func run(onFinished: (SquatAnalysis) -> Void) async {
         guard case .processing(let started) = phase, started == 0 else { return }
-        let backgroundActivity = BackgroundAnalysisActivity()
+        let backgroundActivity = BackgroundWorkActivity(
+            title: String(localized: "Analyzing your set"),
+            subtitle: String(localized: "Measuring every rep")
+        )
         backgroundActivity.begin()
         do {
             let series = try await PoseExtractor.extract(
@@ -36,7 +39,7 @@ final class AnalysisViewModel {
                         backgroundActivity.report(fraction)
                     }
                 },
-                readerStallRecovery: { await BackgroundAnalysisActivity.waitForRetry() }
+                readerStallRecovery: { await BackgroundWorkActivity.waitForRetry() }
             )
             let analysis = SquatAnalyzer.analyze(
                 series, activity: activity, profile: BodyGeometryProfileStore.load()

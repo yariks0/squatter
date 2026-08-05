@@ -277,17 +277,42 @@ struct CoachPromptTests {
         {"positives":[],"priority_fix":{"why":"","topic":"none","cue":"","title":""},"findings":[],"summary":"","tracking_verification":[],"corrective_work":[]}
         """
         let report = try JSONDecoder().decode(CoachReport.self, from: Data(sample.utf8))
-        #expect(report.isEmptyShell)
+        #expect(report.isUnusable)
         #expect(report.sanitized() == nil)
     }
 
     /// Whitespace-only prose is the same failure wearing a hat.
-    @Test func blankProseCountsAsEmptyShell() throws {
+    @Test func blankProseCountsAsUnusable() throws {
         let sample = """
         {"summary":"  ","priority_fix":{"title":"\\n","cue":" ","why":""},"findings":[],"positives":[]}
         """
         let report = try JSONDecoder().decode(CoachReport.self, from: Data(sample.utf8))
-        #expect(report.isEmptyShell)
+        #expect(report.isUnusable)
+    }
+
+    /// The grade of failure that shipped past the first guard: the model
+    /// wrote one finding but left the cue and summary blank, so the review
+    /// screen drew "◎ :" above an empty "Cue:". A finding alone is not
+    /// coaching — reject it and offer the retry.
+    @Test func partiallyBlankReportIsRejected() throws {
+        let sample = """
+        {"summary":"","priority_fix":{"title":"","cue":"","why":"","topic":"none"},"findings":[{"severity":"warning","title":"Bar creeps forward at the bottom","detail":"","rep_numbers":[1],"confidence":"medium","topic":"none"}],"positives":[],"corrective_work":[]}
+        """
+        let report = try JSONDecoder().decode(CoachReport.self, from: Data(sample.utf8))
+        #expect(report.isUnusable)
+        #expect(report.sanitized() == nil)
+    }
+
+    /// A half-written drill renders as a card reading "—" over an empty
+    /// "Fixes:", so it is dropped while the rest of a usable report stands.
+    @Test func halfWrittenDrillIsDropped() throws {
+        let sample = """
+        {"summary":"Depth is the one thing to fix.","priority_fix":{"title":"Sit lower","cue":"Hips below the knee","why":"You stop above parallel."},"findings":[],"positives":[],"corrective_work":[{"kind":"mobility","name":"","target":"","addresses":"","dosage":"","why":"","drill":"none"},{"kind":"mobility","name":"Ankle rock","target":"dorsiflexion","addresses":"Shallow depth","dosage":"3 × 10","why":"Ankles limit the bottom.","drill":"ankleRock"}]}
+        """
+        let report = try JSONDecoder().decode(CoachReport.self, from: Data(sample.utf8))
+        let clean = try #require(report.sanitized())
+        #expect(clean.correctiveWork?.count == 1)
+        #expect(clean.correctiveWork?.first?.name == "Ankle rock")
     }
 
     /// The emptiness check must not swallow a genuinely clean lift: no
@@ -298,7 +323,7 @@ struct CoachPromptTests {
         {"summary":"Textbook set — depth and bar path both hold.","priority_fix":{"title":"Keep the tempo","cue":"Two seconds down","why":"Control is what is holding this together."},"findings":[],"positives":[]}
         """
         let report = try JSONDecoder().decode(CoachReport.self, from: Data(sample.utf8))
-        #expect(!report.isEmptyShell)
+        #expect(!report.isUnusable)
         #expect(report.sanitized() != nil)
     }
 }

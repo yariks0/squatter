@@ -158,7 +158,21 @@ type Result struct {
 	// 152-byte reply). Token counts alone cannot tell those apart, because
 	// thinking dominates both.
 	TextBytes int
+	// StopReason is the upstream's own verdict on why generation ended
+	// (`end_turn`, `max_tokens`, `refusal`, …). An empty reply means something
+	// different under each, and without it the two are indistinguishable in
+	// the log.
+	StopReason string
+	// TextSample holds the opening of the reply, capped at sampleLimit. Only
+	// worth reading when the reply came back short — it turns "empty again"
+	// into a look at what the model actually emitted, without pulling the
+	// `.coach` cache off the device.
+	TextSample string
 }
+
+// sampleLimit caps the retained reply opening. Large enough to show the head
+// of a report, small enough that a full one is never held in memory here.
+const sampleLimit = 512
 
 // EmptyReportBytes is roughly the size of a report whose every field is blank.
 // A 200 with a smaller text payload than this is almost certainly the empty
@@ -242,8 +256,9 @@ func scrapeEvent(line []byte, result *Result) {
 		} `json:"message"`
 		Usage tokenUsage `json:"usage"`
 		Delta struct {
-			Type string `json:"type"`
-			Text string `json:"text"`
+			Type       string `json:"type"`
+			Text       string `json:"text"`
+			StopReason string `json:"stop_reason"`
 		} `json:"delta"`
 	}
 	if json.Unmarshal(bytes.TrimSpace(data), &event) != nil {
@@ -257,9 +272,22 @@ func scrapeEvent(line []byte, result *Result) {
 			result.OutputTokens = usage.OutputTokens
 		}
 	}
+	if event.Delta.StopReason != "" {
+		result.StopReason = event.Delta.StopReason
+	}
 	if event.Delta.Type == "text_delta" {
 		result.TextBytes += len(event.Delta.Text)
+		if remaining := sampleLimit - len(result.TextSample); remaining > 0 {
+			result.TextSample += truncate(event.Delta.Text, remaining)
+		}
 	}
+}
+
+func truncate(text string, limit int) string {
+	if len(text) <= limit {
+		return text
+	}
+	return text[:limit]
 }
 
 type tokenUsage struct {

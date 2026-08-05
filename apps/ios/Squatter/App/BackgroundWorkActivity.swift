@@ -1,8 +1,10 @@
 import BackgroundTasks
 import UIKit
 
-/// Keeps set analysis running when the user leaves the app or locks the
-/// screen. Two layers, held for the duration of one `AnalysisViewModel.run`:
+/// Keeps a long user-initiated job running when the user leaves the app or
+/// locks the screen. Used by set analysis and by the AI coach call, which
+/// blocks on the model for 90–120 s and would otherwise be suspended the
+/// moment the screen locks. Two layers, held for the duration of one run:
 ///
 /// - `UIApplication.beginBackgroundTask` — every OS version; buys the ~30 s
 ///   grace window so short analyses simply finish.
@@ -17,7 +19,7 @@ import UIKit
 /// then recovers on return via `waitForRetry` below, which parks until the
 /// app is active instead of burning resume attempts while backgrounded.
 @MainActor
-final class BackgroundAnalysisActivity {
+final class BackgroundWorkActivity {
     private var uikitTask: UIBackgroundTaskIdentifier = .invalid
     /// `BGContinuedProcessingTask` on iOS 26+; typed as `AnyObject` so the
     /// stored property needs no availability gate.
@@ -27,12 +29,23 @@ final class BackgroundAnalysisActivity {
 
     /// Continued-processing identifiers are one per submission: the plist
     /// permits the `com.yarik.squatter.analysis.*` wildcard and each run
-    /// registers + submits a fresh suffix.
+    /// registers + submits a fresh suffix. Both callers share the one
+    /// permitted family — the identifier is internal, and only `title` and
+    /// `subtitle` reach the user — so adding a job needs no plist change.
     private static let identifierPrefix = "com.yarik.squatter.analysis."
+
+    /// What the system's progress pill shows while the job runs.
+    private let title: String
+    private let subtitle: String
+
+    init(title: String, subtitle: String) {
+        self.title = title
+        self.subtitle = subtitle
+    }
 
     func begin() {
         guard uikitTask == .invalid, !finished else { return }
-        uikitTask = UIApplication.shared.beginBackgroundTask(withName: "set-analysis") {
+        uikitTask = UIApplication.shared.beginBackgroundTask(withName: "squatter-work") {
             [weak self] in
             self?.endUIKitTask()
         }
@@ -99,13 +112,11 @@ final class BackgroundAnalysisActivity {
         }
         guard registered else { return }
         let request = BGContinuedProcessingTaskRequest(
-            identifier: identifier,
-            title: String(localized: "Analyzing your set"),
-            subtitle: String(localized: "Measuring every rep")
+            identifier: identifier, title: title, subtitle: subtitle
         )
-        // .fail over .queue: the analysis runs regardless — if the system
-        // has no room now, a queued grant later would adopt a task for work
-        // that may already be done.
+        // .fail over .queue: the work runs regardless — if the system has no
+        // room now, a queued grant later would adopt a task for work that may
+        // already be done.
         request.strategy = .fail
         try? BGTaskScheduler.shared.submit(request)
     }
@@ -113,7 +124,7 @@ final class BackgroundAnalysisActivity {
     @available(iOS 26.0, *)
     private func adopt(_ task: BGContinuedProcessingTask) {
         guard !finished else {
-            // Analysis won the race with the scheduler; close the task out.
+            // The work won the race with the scheduler; close the task out.
             task.progress.totalUnitCount = 100
             task.progress.completedUnitCount = 100
             task.setTaskCompleted(success: true)

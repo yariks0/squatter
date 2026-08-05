@@ -125,31 +125,56 @@ extension CoachReport {
         }
     }
 
-    /// True when the model returned the schema's shape with nothing in it —
-    /// every required key present, every value blank. The output schema can't
-    /// catch this (the shape *is* valid), so like `hasJSONResidue` it can only
-    /// be caught semantically. Observed on prod 2026-08-04: ~6.9k output
-    /// tokens of thinking followed by a 152-byte all-empty report, which the
-    /// review screen then rendered as a blank card.
+    /// True when the reply satisfies the output schema but carries no usable
+    /// coaching. The schema can't catch this — the *shape* is valid — so like
+    /// `hasJSONResidue` it can only be caught semantically.
     ///
-    /// Deliberately strict: a real set can legitimately have no findings (a
-    /// clean lift) or no positives, so emptiness only counts when the prose
-    /// the model must always write — the summary and the priority cue — is
-    /// missing too.
-    var isEmptyShell: Bool {
-        let prose = [summary, priorityFix.title, priorityFix.cue, priorityFix.why]
-        return prose.allSatisfy { $0.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-            && findings.isEmpty && positives.isEmpty
+    /// Judged on the two fields the review screen always renders and the
+    /// lifter actually acts on: the priority cue (the one line to take to the
+    /// next set) and the summary (the read of the set). Everything else is
+    /// legitimately optional — a clean lift has no findings and no correctives
+    /// — so keying on those would reject good reports.
+    ///
+    /// Both failure grades seen on prod have been caught here: the all-blank
+    /// 152-byte shell (2026-08-04), and the partial reply that carried one
+    /// finding but a blank cue and summary and rendered as "◎ :" over an empty
+    /// "Cue:" (2026-08-05, 390 bytes against 5.5k output tokens).
+    var isUnusable: Bool {
+        Self.isBlank(priorityFix.cue) || Self.isBlank(summary)
     }
 
-    /// The report with a nested-JSON glitch repaired, self when clean, or
-    /// nil when it can't be recovered into a clean report — either because
-    /// the residue is unrecoverable or because the model returned an empty
-    /// shell. The caller then treats the response as unreadable.
+    private static func isBlank(_ text: String) -> Bool {
+        text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    /// The report with a nested-JSON glitch repaired and half-written drills
+    /// dropped, or nil when what is left carries no usable coaching. The
+    /// caller then treats the response as unreadable and offers a retry.
     func sanitized() -> CoachReport? {
-        guard !isEmptyShell else { return nil }
-        guard hasJSONResidue else { return self }
-        return recoveringNestedReport()
+        // Residue recovery first: it is what fills the fields the usability
+        // check then judges, so checking before it would reject recoverable
+        // reports.
+        let repaired: CoachReport
+        if hasJSONResidue {
+            guard let recovered = recoveringNestedReport() else { return nil }
+            repaired = recovered
+        } else {
+            repaired = self
+        }
+        guard !repaired.isUnusable else { return nil }
+        return repaired.droppingHalfWrittenDrills()
+    }
+
+    /// Drops correctives the model left half-written. One blank-named drill
+    /// otherwise renders as a card reading "—" over an empty "Fixes:", which
+    /// is worse than not showing the drill at all.
+    private func droppingHalfWrittenDrills() -> CoachReport {
+        guard let drills = correctiveWork, !drills.isEmpty else { return self }
+        let usable = drills.filter { !Self.isBlank($0.name) && !Self.isBlank($0.addresses) }
+        guard usable.count != drills.count else { return self }
+        var trimmed = self
+        trimmed.correctiveWork = usable
+        return trimmed
     }
 
     private func recoveringNestedReport() -> CoachReport? {

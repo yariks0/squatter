@@ -83,7 +83,7 @@ enum CoachClient {
         // difference between "the model said nothing, retry" and "the reply
         // was unreadable" — the first is worth a Regenerate tap, and caching a
         // blank report would have made it look like a finished assessment.
-        if report.isEmptyShell { throw CoachError.emptyAssessment }
+        if report.isUnusable { throw CoachError.emptyAssessment }
         guard let sane = report.sanitized() else { throw CoachError.badResponse }
         return sane
     }

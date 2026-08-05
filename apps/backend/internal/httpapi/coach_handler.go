@@ -71,11 +71,16 @@ func (a *api) coach(w http.ResponseWriter, r *http.Request) {
 	// dominates output_tokens, so a blank report and a real one look alike
 	// there but differ by an order of magnitude here.
 	slog.Info("coach reply", "user", user.ID, "status", result.Status,
-		"text_bytes", result.TextBytes, "output_tokens", result.OutputTokens)
+		"text_bytes", result.TextBytes, "output_tokens", result.OutputTokens,
+		"stop_reason", result.StopReason)
 	if result.Status == http.StatusOK && result.TextBytes < coach.EmptyReportBytes {
+		// The sample is logged only on this path: a healthy reply is the
+		// lifter's own coaching and has no business in the server log, but a
+		// short one is the whole diagnostic.
 		slog.Warn("coach returned an empty report",
 			"user", user.ID, "text_bytes", result.TextBytes,
-			"output_tokens", result.OutputTokens)
+			"output_tokens", result.OutputTokens,
+			"stop_reason", result.StopReason, "sample", result.TextSample)
 	}
 
 	// The call reached Anthropic and consumed quota even if the client hung up

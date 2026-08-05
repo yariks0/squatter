@@ -15,6 +15,10 @@ struct CoachSectionView: View {
 
     @State private var phase: Phase = .idle
 
+    /// Roughly how long a coach call takes end to end (measured on prod:
+    /// 90–120 s). Only used to pace the background progress pill.
+    private let expectedCoachSeconds: Double = 120
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("AI coach")
@@ -193,15 +197,41 @@ struct CoachSectionView: View {
         }
     }
 
+    /// The coach call blocks on the model for 90–120 s. Without a background
+    /// activity around it, locking the screen or switching apps suspends the
+    /// process mid-request and the connection dies — so the whole wait is
+    /// wrapped the same way set analysis is.
     private func run() {
         phase = .running
+        let activity = BackgroundWorkActivity(
+            title: String(localized: "Coaching your set"),
+            subtitle: String(localized: "Waiting on the AI coach")
+        )
+        activity.begin()
         Task {
+            // A continued-processing task that stops advancing is expired by
+            // the system, and this job has no measurable progress of its own —
+            // so drive the pill off elapsed time against a typical call,
+            // easing toward but never reaching full until the reply lands.
+            let ticker = Task { @MainActor in
+                let started = Date()
+                while !Task.isCancelled {
+                    try? await Task.sleep(for: .seconds(1))
+                    let elapsed = Date().timeIntervalSince(started)
+                    activity.report(min(0.95, elapsed / expectedCoachSeconds))
+                }
+            }
+            defer {
+                ticker.cancel()
+            }
             do {
                 let report = try await CoachClient.coach(analysis: analysis, videoURL: videoURL)
                 CoachReportStore.save(report, for: videoURL)
                 phase = .done(report)
+                activity.end(success: true)
             } catch {
                 phase = .failed(error.localizedDescription)
+                activity.end(success: false)
             }
         }
     }

@@ -39,7 +39,10 @@ polish.squatter.fit {
 		max_size 1MB
 	}
 	basic_auth {
-		polish {$POLISH_PASSWORD_HASH}
+		Jarek {$POLISH_PASSWORD_HASH}
+		Zhenia {$POLISH_PASSWORD_HASH_ZHENIA}
 	}
-	reverse_proxy helper-polish:8080
+	reverse_proxy helper-polish:8080 {
+		header_up X-Remote-User {http.auth.user.id}
+	}
 }

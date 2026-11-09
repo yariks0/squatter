@@ -80,6 +80,7 @@ services:
       API_DOMAIN: ${API_DOMAIN:?set API_DOMAIN in .env.prod}
       ACME_EMAIL: ${ACME_EMAIL:?set ACME_EMAIL in .env.prod}
       POLISH_PASSWORD_HASH: ${POLISH_PASSWORD_HASH:?set POLISH_PASSWORD_HASH in .env.prod}
+      POLISH_PASSWORD_HASH_ZHENIA: ${POLISH_PASSWORD_HASH_ZHENIA:?set POLISH_PASSWORD_HASH_ZHENIA in .env.prod}
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
       # Issued certificates live here. Losing this volume means re-issuing on

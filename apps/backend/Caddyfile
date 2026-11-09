@@ -33,3 +33,13 @@
 		format json
 	}
 }
+
+polish.squatter.fit {
+	request_body {
+		max_size 1MB
+	}
+	basic_auth {
+		polish {$POLISH_PASSWORD_HASH}
+	}
+	reverse_proxy helper-polish:8080
+}
